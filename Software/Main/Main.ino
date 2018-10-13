@@ -1,7 +1,9 @@
 #include <Metro.h> // Include the Metro library
 
-//pins for input (clock) and output (inbuilt LED)
-const int ledPin = 13;
+//pins for input (clock) and outputs (LEDS)
+const int outPin1 = 3;
+const int outPin2 = 5;
+const int outPin3 = 6;
 const int switchPin = 17;
 
 //recentPresses[] stores the times of the 6 most recent switch presses
@@ -13,22 +15,31 @@ const int recentPressesArraySize = 6;
 const double ButtonPressTimeout = 5000000; //in microseconds. if the time between two button presses is greater than this, do not use it to set the output clock. 
 
 Metro ClockOutput1 = Metro(1000); //sets up a regular event for clock pulses
+Metro ClockOutput2 = Metro(1000); //sets up a regular event for clock pulses
+Metro ClockOutput3 = Metro(1000); //sets up a regular event for clock pulses
 
 
 double pressTimeTemp = 0; //temporarily stores the time, when the button is pressed
 int buttonState = 0; // this will remember if the button was pressed in the previous cycle 
 
-
+//multiplication/division factors. These will eventually be controlled by pots.
+float MultDivFactor2 = 4;
+float MultDivFactor3 = 0.3333;
 
 
 void setup() {
   // put your setup code here, to run once:
-  pinMode(ledPin, OUTPUT);
+  pinMode(outPin1, OUTPUT);
+  pinMode(outPin2, OUTPUT);
+  pinMode(outPin3, OUTPUT);
+
   pinMode(switchPin, INPUT);
 
   Serial.begin(9600);
 
   ClockOutput1.reset(); //start the output clock
+  ClockOutput2.reset(); //start the output clock
+  ClockOutput3.reset(); //start the output clock
 
 }
 
@@ -58,16 +69,38 @@ void loop() {
       //If there have been 2 switch pulses recently, use the timing to set the frequence of clock pulse 1
       if(recentPresses[1]>0 && recentPresses[0]-recentPresses[1]<ButtonPressTimeout){
         ClockOutput1.interval( (recentPresses[0]-recentPresses[1]) / 1000);
+        ClockOutput2.interval( (recentPresses[0]-recentPresses[1])/ (MultDivFactor2 * 1000));
+        ClockOutput3.interval( (recentPresses[0]-recentPresses[1])/ (MultDivFactor3 * 1000));
       }
 
+
   // deal with output
+  
   if(ClockOutput1.check()){           //...if it's time to make a clock pulse
-        digitalWrite(ledPin,HIGH);    //generate the pulse
+        digitalWrite(outPin1,HIGH);    //generate the pulse
         ClockOutput1.reset();         //reset the timer
   }
   else{
-    digitalWrite(ledPin,LOW);
+    digitalWrite(outPin1,LOW);
   }
+  
+  if(ClockOutput2.check()){           //...if it's time to make a clock pulse
+        digitalWrite(outPin2,HIGH);    //generate the pulse
+        ClockOutput2.reset();         //reset the timer
+  }
+  else{
+    digitalWrite(outPin2,LOW);
+  }
+
+    if(ClockOutput3.check()){           //...if it's time to make a clock pulse
+        digitalWrite(outPin3,HIGH);    //generate the pulse
+        ClockOutput3.reset();         //reset the timer
+  }
+  else{
+    digitalWrite(outPin3,LOW);
+  }
+
+  
 
 
 }
