@@ -23,8 +23,10 @@ double pressTimeTemp = 0; //temporarily stores the time, when the button is pres
 int buttonState = 0; // this will remember if the button was pressed in the previous cycle 
 
 //multiplication/division factors. These will eventually be controlled by pots.
+//float ClicksPerCycle = 8;
 float MultDivFactor2 = 4;
 float MultDivFactor3 = 0.3333;
+
 
 
 void setup() {
@@ -71,6 +73,9 @@ void loop() {
         ClockOutput1.interval( (recentPresses[0]-recentPresses[1]) / 1000);
         ClockOutput2.interval( (recentPresses[0]-recentPresses[1])/ (MultDivFactor2 * 1000));
         ClockOutput3.interval( (recentPresses[0]-recentPresses[1])/ (MultDivFactor3 * 1000));
+        //ClockOutput1.reset();
+        //ClockOutput2.reset();
+        //ClockOutput3.reset();   
       }
 
 
@@ -87,7 +92,8 @@ void loop() {
   if(ClockOutput2.check()){           //...if it's time to make a clock pulse
         digitalWrite(outPin2,HIGH);    //generate the pulse
         ClockOutput2.reset();         //reset the timer
-  }
+
+        }
   else{
     digitalWrite(outPin2,LOW);
   }
@@ -95,6 +101,8 @@ void loop() {
     if(ClockOutput3.check()){           //...if it's time to make a clock pulse
         digitalWrite(outPin3,HIGH);    //generate the pulse
         ClockOutput3.reset();         //reset the timer
+         ClockOutput2.reset(); 
+        ClockOutput1.reset(); 
   }
   else{
     digitalWrite(outPin3,LOW);
