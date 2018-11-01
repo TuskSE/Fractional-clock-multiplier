@@ -505,7 +505,7 @@ L Device:R R15
 U 1 1 5BD77053
 P 5400 3375
 F 0 "R15" V 5193 3375 50  0000 C CNN
-F 1 "13k" V 5284 3375 50  0000 C CNN
+F 1 "11k" V 5284 3375 50  0000 C CNN
 F 2 "" V 5330 3375 50  0001 C CNN
 F 3 "~" H 5400 3375 50  0001 C CNN
 	1    5400 3375
@@ -516,7 +516,7 @@ L Device:R R16
 U 1 1 5BD77233
 P 5950 3375
 F 0 "R16" V 5743 3375 50  0000 C CNN
-F 1 "100k" V 5834 3375 50  0000 C CNN
+F 1 "91k" V 5834 3375 50  0000 C CNN
 F 2 "" V 5880 3375 50  0001 C CNN
 F 3 "~" H 5950 3375 50  0001 C CNN
 	1    5950 3375
@@ -556,7 +556,7 @@ F 3 "" H 5150 3375 50  0001 C CNN
 	0    -1   -1   0   
 $EndComp
 Text Notes 4950 5075 0    50   ~ 0
-Scales a + - 10V voltage to 0 - 3.3V. Either the divider\n for the reference voltage needs a trimpot, or a\n software calibration will needed to set the zero point. \nCalculations assume the -12V rail is actually -11.3V...
+Scales a + - 10V voltage to 0 - 3.3V. Either the divider\n for the reference voltage needs a trimpot, or a\n software calibration will needed to set the zero point. \nthe 11k/91k divider would be 13k/100k if I had the right\nresistors on hand!\nCalculations assume the -12V rail is actually -11.3V...
 $Comp
 L Device:R R21
 U 1 1 5BD849EF
