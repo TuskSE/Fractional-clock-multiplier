@@ -474,7 +474,7 @@ L Device:R R20
 U 1 1 5BD723B8
 P 6875 3825
 F 0 "R20" V 6668 3825 50  0000 C CNN
-F 1 "670k" V 6759 3825 50  0000 C CNN
+F 1 "15k" V 6759 3825 50  0000 C CNN
 F 2 "" V 6805 3825 50  0001 C CNN
 F 3 "~" H 6875 3825 50  0001 C CNN
 	1    6875 3825
@@ -1342,8 +1342,6 @@ Wire Wire Line
 Wire Wire Line
 	10450 5650 10750 5650
 Wire Wire Line
-	10450 5850 10775 5850
-Wire Wire Line
 	5500 1050 5050 1050
 Wire Wire Line
 	5500 1150 5050 1150
@@ -1516,7 +1514,39 @@ Wire Notes Line
 	11125 575  11125 2300
 Wire Notes Line
 	11125 2300 8725 2300
-Connection ~ 4250 2850
 Text Notes 1800 7625 0    50   ~ 0
 For PCB version, move the 1k\nresistor downstream, to \navoid making a potential \ndivider with the LED-\nlimiting resistor.
+$Comp
+L Device:R R?
+U 1 1 5BE8D16E
+P 10675 6000
+F 0 "R?" V 10468 6000 50  0000 C CNN
+F 1 "100k" V 10559 6000 50  0000 C CNN
+F 2 "" V 10605 6000 50  0001 C CNN
+F 3 "~" H 10675 6000 50  0001 C CNN
+	1    10675 6000
+	0    -1   -1   0   
+$EndComp
+$Comp
+L power:GND #PWR?
+U 1 1 5BE8D2E2
+P 10925 6000
+F 0 "#PWR?" H 10925 5750 50  0001 C CNN
+F 1 "GND" H 10930 5827 50  0000 C CNN
+F 2 "" H 10925 6000 50  0001 C CNN
+F 3 "" H 10925 6000 50  0001 C CNN
+	1    10925 6000
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	10450 5850 10475 5850
+Wire Wire Line
+	10825 6000 10925 6000
+Wire Wire Line
+	10525 6000 10475 6000
+Wire Wire Line
+	10475 6000 10475 5850
+Connection ~ 10475 5850
+Wire Wire Line
+	10475 5850 10775 5850
 $EndSCHEMATC
