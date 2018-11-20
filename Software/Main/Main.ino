@@ -27,6 +27,15 @@ const int recentClockTimesArraySize = 6;
 
 const double ButtonPressTimeout = 5000000; //in microseconds. if the time between two button presses is greater than this, do not use it to set the output clock. 
 
+//sets the range for the Length and Division knobs
+const int Divisions_min = 1;
+const int Divisions_max = 16;
+const int Length_min = 1;
+const int Length_max = 16;
+//To read Knob value: reading = map(analogRead(CtrPin_Length),0,1023,Length_min,Length_max);
+
+
+
 Metro ClockOutput1 = Metro(1000); //sets up a regular event for clock pulses
 Metro ClockOutput2 = Metro(1000); //sets up a regular event for clock pulses
 Metro ClockOutput3 = Metro(1000); //sets up a regular event for clock pulses
