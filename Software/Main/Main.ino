@@ -34,12 +34,9 @@ const int Length_min = 1;
 const int Length_max = 16;
 //To read Knob value: reading = map(analogRead(CtrPin_Length),0,1023,Length_min,Length_max);
 
-
-
 Metro ClockOutput1 = Metro(1000); //sets up a regular event for clock pulses
 Metro ClockOutput2 = Metro(1000); //sets up a regular event for clock pulses
 Metro ClockOutput3 = Metro(1000); //sets up a regular event for clock pulses
-
 
 double pressTimeTemp = 0; //temporarily stores the time, when the button is pressed
 int clockInPrevState = 0; // this will remember if the clock input was "on" in the previous cycle 
@@ -49,7 +46,74 @@ int clockInPrevState = 0; // this will remember if the clock input was "on" in t
 float MultDivFactor2 = 2;
 float MultDivFactor3 = 0.5;
 
+//-------------------------------------------------------------------------------------------------------------------
 
+//The PulsePredictor class is responsible for 
+// + logging input pulses    + predicting when future pulses will arise
+// + knowing whether it is giving good predictions or not
+// + relaying pulse events to other bits of code
+// + relaying, e.g., cycle times to other bits of code
+
+const int recentPulseTimesArraySize = 10;
+const int predictedFuturePulseTimesArraySize = 16;
+
+class PulsePredictor {
+  unsigned long int recentPulseTimes[recentPulseTimesArraySize];    //remembers the absolute time of the previous 10 pulses
+  unsigned long int predictedFuturePulseTimes[16]; //predicts the absolute time of the next 16 pulses
+  bool TrustworthyPulsePredictions; // records whether the incoming clock is predictable
+  bool PulseRecieved; //notes when a pulse has been recieved
+  bool TransmitPulse; //notes when a pulse should be transmitted to downstream code segments
+  bool PulsesShouldBeTransmitted; //notes whether pulses ought to be transmitted
+
+  public:
+  PulsePredictor (); //sets default initialization values  
+  void InputPulse (); //engaging this tells the Pulse Predictor that a Pulse has arrived
+  unsigned long int TimeOfNthPulse (int n); //returns the estimated time of future pulses
+  unsigned long int PulseInterval (int n1, int n2); //returns the expected time between future pulses
+  bool IsThereAPulse () {return TransmitPulse;}   
+  void RecalculatePredictions ();
+};
+
+//sets the default initialization of the PulsePredictor
+PulsePredictor::PulsePredictor () {   
+  TrustworthyPulsePredictions = false;
+  PulseRecieved = false;
+  TransmitPulse = false;
+  PulsesShouldBeTransmitted = true;
+}
+
+void PulsePredictor::InputPulse (){
+     //Log the time of the input pulse
+     
+     //........insert the time in the array of press times, rotating the array to maintain ordering from most to least recent
+      for(int i=(recentPulseTimesArraySize-1); i>0; i--){
+        recentPulseTimes[i] = recentPulseTimes[i-1];
+        }
+      recentPulseTimes[0] =  millis();
+
+      //Flag the fact that a pulse has been recieved
+      PulseRecieved = true;
+
+      //Flag the the pulse should be transmitted
+      if (PulsesShouldBeTransmitted == true){
+        TransmitPulse = true;
+      }
+}
+
+void PulsePredictor::RecalculatePredictions (){
+  //Measure the average of the time between the last two pulses. In future, this can be more sophisticated.
+  unsigned long int PulseInterval = (recentPulseTimes[0]-recentPulseTimes[2])/2;
+
+  //Use this to predict the times of future pulses
+  for(int i=0; i<predictedFuturePulseTimesArraySize; i++){
+    predictedFuturePulseTimes[i] = recentPulseTimes[0]+(i+1)*PulseInterval;
+  }
+}
+
+
+
+
+//----------------------------------------------------------------------------------------------------------------------
 
 void setup() {
   // put your setup code here, to run once:
@@ -84,6 +148,8 @@ void setup() {
   ClockOutput3.reset(); //start the output clock
 
 }
+
+//----------------------------------------------------------------------------------------------------------------------
 
 void loop() {
   // put your main code here, to run repeatedly:
