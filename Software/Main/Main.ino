@@ -39,6 +39,7 @@ Metro ClockOutput2 = Metro(1000); //sets up a regular event for clock pulses
 Metro ClockOutput3 = Metro(1000); //sets up a regular event for clock pulses
 
 double pressTimeTemp = 0; //temporarily stores the time, when the button is pressed
+int clockInState = 0;
 int clockInPrevState = 0; // this will remember if the clock input was "on" in the previous cycle 
 
 //multiplication/division factors. These will eventually be controlled by pots.
@@ -70,9 +71,9 @@ class PulsePredictor {
   void InputPulse (); //engaging this tells the Pulse Predictor that a Pulse has arrived
   unsigned long int TimeOfNthPulse (int n); //returns the estimated time of future pulses
   unsigned long int PulseInterval (int n1, int n2); //returns the expected time between future pulses
-  bool IsThereAPulse () {return TransmitPulse;}   
+  bool IsThereAPulse ();
   void RecalculatePredictions ();
-};
+} InputPulsePredictor;
 
 //sets the default initialization of the PulsePredictor
 PulsePredictor::PulsePredictor () {   
@@ -100,6 +101,7 @@ void PulsePredictor::InputPulse (){
       }
 }
 
+
 void PulsePredictor::RecalculatePredictions (){
   //Measure the average of the time between the last two pulses. In future, this can be more sophisticated.
   unsigned long int PulseInterval = (recentPulseTimes[0]-recentPulseTimes[2])/2;
@@ -110,7 +112,15 @@ void PulsePredictor::RecalculatePredictions (){
   }
 }
 
-
+bool PulsePredictor::IsThereAPulse() {
+  if ( TransmitPulse == true ) {
+    TransmitPulse = false; //assume the pulse has now been transmitted - job done!
+    return true;
+  } else {
+    return false;
+  }
+  
+}
 
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -147,70 +157,32 @@ void setup() {
   ClockOutput2.reset(); //start the output clock
   ClockOutput3.reset(); //start the output clock
 
+  //PulsePredictor InputPulsePredictor;
+  
 }
 
 //----------------------------------------------------------------------------------------------------------------------
 
 void loop() {
-  // put your main code here, to run repeatedly:
-
   // deal with input
-  if(digitalRead(InPin_Trig) == 0 && clockInPrevState == 1){      //............if the Trigger In voltage switches from low to high
-
-      //........insert the time in the array of press times, rotating the array to maintain ordering from most to least recent
-      for(int i=(recentClockTimesArraySize-1); i>0; i--){
-        recentClockTimes[i] = recentClockTimes[i-1];
-        }
-      recentClockTimes[0] =  micros();
-      }
-
-      clockInPrevState = digitalRead(InPin_Trig); //save the switch value for reference on the next round
-      
-      //....print the value of the recent-presses array
-      for(int i=0; i<recentClockTimesArraySize; i++){
-        Serial.print(recentClockTimes[i]);
-      }
-      Serial.println();
-
-      //If there have been 2 switch pulses recently, use the timing to set the frequence of clock pulse 1
-      if(recentClockTimes[1]>0 && recentClockTimes[0]-recentClockTimes[1]<ButtonPressTimeout){
-        ClockOutput1.interval( (recentClockTimes[0]-recentClockTimes[1]) / 1000);
-        ClockOutput2.interval( (recentClockTimes[0]-recentClockTimes[1])/ (MultDivFactor2 * 1000));
-        ClockOutput3.interval( (recentClockTimes[0]-recentClockTimes[1])/ (MultDivFactor3 * 1000));
-        //ClockOutput1.reset();
-        //ClockOutput2.reset();
-        //ClockOutput3.reset();   
-      }
-
-
-  // deal with output
+  clockInState = digitalRead(InPin_Trig);
   
-  if(ClockOutput1.check()){           //...if it's time to make a clock pulse
-        digitalWrite(OutPin_Thru,HIGH);    //generate the pulse
-        ClockOutput1.reset();         //reset the timer
+  if(clockInState == 0 && clockInPrevState == 1){      //............if the Trigger In voltage switches from low to high
+    InputPulsePredictor.InputPulse();
   }
-  else{
+    clockInPrevState = clockInState;
+
+ 
+
+    
+  // deal with output
+  if(InputPulsePredictor.IsThereAPulse()==true){
+    digitalWrite(OutPin_Thru,HIGH);    //generate the pulse
+  }else{
     digitalWrite(OutPin_Thru,LOW);
   }
-  
-  if(ClockOutput2.check()){           //...if it's time to make a clock pulse
-        digitalWrite(OutPin_Cycle,HIGH);    //generate the pulse
-        ClockOutput2.reset();         //reset the timer
 
-        }
-  else{
-    digitalWrite(OutPin_Cycle,LOW);
-  }
-
-    if(ClockOutput3.check()){           //...if it's time to make a clock pulse
-        digitalWrite(OutPin_MainOut,HIGH);    //generate the pulse
-        ClockOutput3.reset();         //reset the timer
-         ClockOutput2.reset(); 
-        ClockOutput1.reset(); 
-  }
-  else{
-    digitalWrite(OutPin_MainOut,LOW);
-  }
-
-
+  //Serial.println(InPin_Trig);
+  //Serial.println(InputPulsePredictor.IsThereAPulse());
+  delay(1);
 }
