@@ -330,7 +330,7 @@ bool DividerMultiplier::ShouldWeOutputMainPulse(){
 //  }
 }
 
-bool DividerMultiplier::ShouldWeOutputThruPulse(){
+bool DividerMultiplier::ShouldWeOutputThruPulse(){    //Note: pulses from "main" will ALSO be passed to the thru output in divider mode. That's not handled by this function.
     if(ThruPulseStart){
       ThruPulseStart = false; //registers that the instruction has been read
       return true;
@@ -398,6 +398,7 @@ void loop() {
   }
 
     if(DividerMultiplierMain.ShouldWeOutputMainPulse()==true){
+    TrigOutManager_Main.StartPulse();
     TrigOutManager_Thru.StartPulse();
   }
 
