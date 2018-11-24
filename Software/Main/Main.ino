@@ -34,10 +34,6 @@ const int Length_min = 1;
 const int Length_max = 16;
 //To read Knob value: reading = map(analogRead(CtrPin_Length),0,1023,Length_min,Length_max);
 
-Metro ClockOutput1 = Metro(1000); //sets up a regular event for clock pulses
-Metro ClockOutput2 = Metro(1000); //sets up a regular event for clock pulses
-Metro ClockOutput3 = Metro(1000); //sets up a regular event for clock pulses
-
 double pressTimeTemp = 0; //temporarily stores the time, when the button is pressed
 int clockInState = 0;
 int clockInPrevState = 0; // this will remember if the clock input was "on" in the previous cycle 
@@ -61,6 +57,7 @@ const int predictedFuturePulseTimesArraySize = 16;
 class PulsePredictor {
   unsigned long int recentPulseTimes[recentPulseTimesArraySize];    //remembers the absolute time of the previous 10 pulses
   unsigned long int predictedFuturePulseTimes[16]; //predicts the absolute time of the next 16 pulses
+  signed long int PredictionError[4]; //for the previous 10 pulses, record the difference between the actual pulse time and what was predicted
   bool TrustworthyPulsePredictions; // records whether the incoming clock is predictable
   bool PulseRecieved; //notes when a pulse has been recieved
   bool TransmitPulse; //notes when a pulse should be transmitted to downstream code segments
@@ -73,6 +70,7 @@ class PulsePredictor {
   unsigned long int PulseInterval (int n1, int n2); //returns the expected time between future pulses
   bool IsThereAPulse ();
   void RecalculatePredictions ();
+  void CheckReliability ();
 } InputPulsePredictor;
 
 //sets the default initialization of the PulsePredictor
@@ -85,6 +83,7 @@ PulsePredictor::PulsePredictor () {
 
 void PulsePredictor::InputPulse (){
      //Log the time of the input pulse
+
      
      //........insert the time in the array of press times, rotating the array to maintain ordering from most to least recent
       for(int i=(recentPulseTimesArraySize-1); i>0; i--){
@@ -99,8 +98,29 @@ void PulsePredictor::InputPulse (){
       if (PulsesShouldBeTransmitted == true){
         TransmitPulse = true;
       }
+
+      //check this time against what the pulse predictor was expecting, and record
+      
+        for(int i=3; i>0; i--){
+         PredictionError[i] = PredictionError[i-1];
+        }
+      PredictionError[0] = recentPulseTimes[0]-predictedFuturePulseTimes[0];
+
+      CheckReliability (); // check how reliable the last few predictions have been
+      RecalculatePredictions (); //recalculate estimates of upcoming pulse times
 }
 
+
+void PulsePredictor::CheckReliability (){
+  int sum = 0;
+  for (int i=0; i<4; i++){
+    sum = sum + PredictionError[i];
+  }
+
+  if (sum < 10) { TrustworthyPulsePredictions = true; } else
+  { TrustworthyPulsePredictions = true; }
+  
+}
 
 void PulsePredictor::RecalculatePredictions (){
   //Measure the average of the time between the last two pulses. In future, this can be more sophisticated.
@@ -110,6 +130,7 @@ void PulsePredictor::RecalculatePredictions (){
   for(int i=0; i<predictedFuturePulseTimesArraySize; i++){
     predictedFuturePulseTimes[i] = recentPulseTimes[0]+(i+1)*PulseInterval;
   }
+
 }
 
 bool PulsePredictor::IsThereAPulse() {
@@ -118,6 +139,15 @@ bool PulsePredictor::IsThereAPulse() {
     return true;
   } else {
     return false;
+  }
+  
+}
+
+unsigned long int PulsePredictor::TimeOfNthPulse (int n){
+  if (TrustworthyPulsePredictions){
+      return predictedFuturePulseTimes[n-1];
+  } else {
+    return 0; //this will be the signal that there are no reliable predictions
   }
   
 }
@@ -134,7 +164,7 @@ class TrigOutManager {
   TrigOutManager (); //initializes trigger length. Currently this is hardwired into the function.
   void StartPulse();
   bool ShouldWeBeOutputting();
-} TrigOutManager_Thru;
+} TrigOutManager_Thru, TrigOutManager_Cycle, TrigOutManager_Main;
 
 
 //initialize variables
@@ -166,6 +196,148 @@ bool TrigOutManager::ShouldWeBeOutputting(){
   }
 }
 
+
+//------------------------------------------------------------------------------------------------------------
+// This will handle clock division/multiplication. Its aim is to spread N output pulses evenly in the space between M 
+// input pulses. The end of an input cycle will trigger the end of the output cycle, to ensure sync is maintained.
+// To space out pulses correctly, it must recieve information about how long the cycle is expected to last. 
+
+class DividerMultiplier {
+  int InputCycleLength,OutputCycleLength,PositionInInputCycle,PositionInOutputCycle;
+  unsigned long int ExpectedCycleLength, CycleStartTime, ExpectedCycleEndTime, ExpectedIntervalTime, PulseTimes[16];
+  bool CycleOutPulseStart, MainOutPulseStart, ThruPulseStart, TransmitPulses;
+  
+  public:
+  DividerMultiplier ();
+  void CycleReset();
+  bool ShouldWeOutputCyclePulse();
+  bool ShouldWeOutputMainPulse();
+  bool ShouldWeOutputThruPulse();
+  void InputPulse();
+  void SetInOutCycleLengths(int, int);
+  void CalculateOutputTimes();
+} DividerMultiplierMain;
+
+
+DividerMultiplier::DividerMultiplier(){   //initalize values
+  TransmitPulses = false;
+  CycleOutPulseStart = false;
+  MainOutPulseStart = false;
+  ThruPulseStart = false;
+  InputCycleLength = 2;
+  OutputCycleLength = 3;
+  PositionInInputCycle = 0;
+  PositionInOutputCycle = 0; 
+  CycleStartTime = 0;
+}
+
+void DividerMultiplier::SetInOutCycleLengths(int in, int out){
+  InputCycleLength = in;
+  OutputCycleLength = out;
+}
+
+void DividerMultiplier::CalculateOutputTimes() {
+ //do not call this until we have enough information to do the calculations!
+ ExpectedCycleEndTime = InputPulsePredictor.TimeOfNthPulse(InputCycleLength); 
+
+ if(CycleStartTime !=0 && ExpectedCycleEndTime !=0){
+  TransmitPulses = true;
+  ExpectedCycleLength = ExpectedCycleEndTime - CycleStartTime;
+  ExpectedIntervalTime = ExpectedCycleLength/OutputCycleLength;
+  
+Serial.println(" ");
+Serial.print(CycleStartTime);
+Serial.print("  to   ");
+Serial.println(ExpectedCycleEndTime);
+
+Serial.println(ExpectedIntervalTime);
+
+  
+  PulseTimes[0] = CycleStartTime;
+      Serial.print(PulseTimes[0]);
+      Serial.print(" ");
+  
+    for (int i=1; i < OutputCycleLength; i++){
+      PulseTimes[i] = PulseTimes[i-1]+ExpectedIntervalTime;
+      Serial.print(PulseTimes[i]);
+      Serial.print(" ");
+    }
+  }  
+}
+
+// registers an input pulse. Advances the input pulse clock.  
+//if we reached the end of the cycle, loop back to the start, emit both pulses, and calculate the times for the next set of pulses
+
+void DividerMultiplier::InputPulse() {
+  PositionInInputCycle = PositionInInputCycle + 1;
+  
+  ThruPulseStart=true; // pass to thru output
+
+  if (PositionInInputCycle >= InputCycleLength){    
+      PositionInInputCycle = 0;
+      PositionInOutputCycle = 0;
+      CycleOutPulseStart = true;
+      MainOutPulseStart = true;
+      CycleStartTime = millis();
+      CalculateOutputTimes();
+  }
+      
+}
+
+
+void DividerMultiplier::CycleReset() {
+  //This will mark the next input pulse as the start of the cycle
+    PositionInInputCycle=InputCycleLength-1;
+}
+
+
+bool DividerMultiplier::ShouldWeOutputCyclePulse(){
+  if (TransmitPulses==true){
+    if(CycleOutPulseStart){
+      CycleOutPulseStart = false; //registers that the instruction has been read
+      return true;
+      } else {
+        return false;
+      } 
+    } else {
+      return false;
+    } 
+}
+
+
+bool DividerMultiplier::ShouldWeOutputMainPulse(){
+  if (millis() > PulseTimes[PositionInOutputCycle]){
+    if (PositionInOutputCycle<OutputCycleLength){      //The cycle only loops back to the start when triggered by the input signal
+      PositionInOutputCycle = PositionInOutputCycle + 1;  
+      return true;       Serial.println(PositionInOutputCycle);
+
+    } else
+      return false; 
+  } else {
+      return false;
+  }
+
+  
+//  if (TransmitPulses==true){
+//    if(MainOutPulseStart){
+//      MainOutPulseStart = false; //registers that the instruction has been read
+//      return true;
+//    } else {
+//      return false;
+//    }
+//  } else {
+//      return false;
+//  }
+}
+
+bool DividerMultiplier::ShouldWeOutputThruPulse(){
+    if(ThruPulseStart){
+      ThruPulseStart = false; //registers that the instruction has been read
+      return true;
+      } else {
+        return false;
+      } 
+}
 
 
 
@@ -199,10 +371,6 @@ void setup() {
 
   Serial.begin(9600);
 
-  ClockOutput1.reset(); //start the output clock
-  ClockOutput2.reset(); //start the output clock
-  ClockOutput3.reset(); //start the output clock
-  
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -213,26 +381,50 @@ void loop() {
   
   if(clockInState == 0 && clockInPrevState == 1){      //............if the Trigger In voltage switches from low to high
     InputPulsePredictor.InputPulse();
+    DividerMultiplierMain.InputPulse();
   }
     clockInPrevState = clockInState;
 
- 
 
-    
-  // deal with output
-  
-  if(InputPulsePredictor.IsThereAPulse()==true){
+
+
+  // deal with starting output pulses
+  if(DividerMultiplierMain.ShouldWeOutputThruPulse()==true){
     TrigOutManager_Thru.StartPulse();
   }
 
+  if(DividerMultiplierMain.ShouldWeOutputCyclePulse()==true){
+    TrigOutManager_Cycle.StartPulse();
+  }
+
+    if(DividerMultiplierMain.ShouldWeOutputMainPulse()==true){
+    TrigOutManager_Thru.StartPulse();
+  }
+
+
+
+
+  //deal with actually setting voltage on the outputs
   if(TrigOutManager_Thru.ShouldWeBeOutputting()==true){
     digitalWrite(OutPin_Thru,HIGH);
   } else {
     digitalWrite(OutPin_Thru,LOW);
   }
-  
-  
 
-  //Serial.println(InPin_Trig);
-  //Serial.println(InputPulsePredictor.IsThereAPulse());
+  if(TrigOutManager_Main.ShouldWeBeOutputting()==true){
+    digitalWrite(OutPin_MainOut,HIGH);
+  } else {
+    digitalWrite(OutPin_MainOut,LOW);
+  }
+
+  if(TrigOutManager_Cycle.ShouldWeBeOutputting()==true){
+    digitalWrite(OutPin_Cycle,HIGH);
+  } else {
+    digitalWrite(OutPin_Cycle,LOW);
+  }
+
+
+  //read knob changes
+  
+  
 }
