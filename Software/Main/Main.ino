@@ -122,6 +122,52 @@ bool PulsePredictor::IsThereAPulse() {
   
 }
 
+//----------------------------------------------------------------------------------------------------------------------
+
+// the TrigOutManager is called on to generate output pulses, and handles e.g. the timing of said pulses.
+
+class TrigOutManager {
+  unsigned long TrigLengthMicros, CurrentPulseEndtimeMicros; //Length of trigger pulse in microseconds
+  bool OutputPulseOccuring; //if True, we are in the middle of outputting a pulse
+
+  public:
+  TrigOutManager (); //initializes trigger length. Currently this is hardwired into the function.
+  void StartPulse();
+  bool ShouldWeBeOutputting();
+} TrigOutManager_Thru;
+
+
+//initialize variables
+TrigOutManager::TrigOutManager (){
+  TrigLengthMicros = 1000;
+}
+
+
+void TrigOutManager::StartPulse(){
+  OutputPulseOccuring = true;
+  CurrentPulseEndtimeMicros = micros() + TrigLengthMicros;
+
+  //If the micros() timer is close to rollover, just skip the pulse. Quick and dirty!
+  if(CurrentPulseEndtimeMicros > 429496700 ){
+    OutputPulseOccuring = false;
+  }
+}
+
+bool TrigOutManager::ShouldWeBeOutputting(){
+  if(OutputPulseOccuring){
+    if (micros()>CurrentPulseEndtimeMicros){
+      OutputPulseOccuring = false;
+      return false;
+    } else {
+      return true;
+    }
+  } else {
+    return false;
+  }
+}
+
+
+
 
 //----------------------------------------------------------------------------------------------------------------------
 
@@ -156,8 +202,6 @@ void setup() {
   ClockOutput1.reset(); //start the output clock
   ClockOutput2.reset(); //start the output clock
   ClockOutput3.reset(); //start the output clock
-
-  //PulsePredictor InputPulsePredictor;
   
 }
 
@@ -176,13 +220,19 @@ void loop() {
 
     
   // deal with output
+  
   if(InputPulsePredictor.IsThereAPulse()==true){
-    digitalWrite(OutPin_Thru,HIGH);    //generate the pulse
-  }else{
+    TrigOutManager_Thru.StartPulse();
+  }
+
+  if(TrigOutManager_Thru.ShouldWeBeOutputting()==true){
+    digitalWrite(OutPin_Thru,HIGH);
+  } else {
     digitalWrite(OutPin_Thru,LOW);
   }
+  
+  
 
   //Serial.println(InPin_Trig);
   //Serial.println(InputPulsePredictor.IsThereAPulse());
-  delay(1);
 }
