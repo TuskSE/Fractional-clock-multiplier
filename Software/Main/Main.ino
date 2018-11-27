@@ -68,6 +68,7 @@ class PulsePredictor {
   void InputPulse (); //engaging this tells the Pulse Predictor that a Pulse has arrived
   unsigned long int TimeOfNthPulse (int n); //returns the estimated time of future pulses
   unsigned long int PulseInterval (int n1, int n2); //returns the expected time between future pulses
+  unsigned long int TimeOflastPulsePlusN(int); //returns the time of a pulse in the past. n=0 => last pulse. n=1 is the pulse before that. etc
   bool IsThereAPulse ();
   void RecalculatePredictions ();
   void CheckReliability ();
@@ -149,8 +150,17 @@ unsigned long int PulsePredictor::TimeOfNthPulse (int n){
   } else {
     return 0; //this will be the signal that there are no reliable predictions
   }
-  
 }
+
+
+unsigned long int PulsePredictor::TimeOflastPulsePlusN (int n){
+  if (TrustworthyPulsePredictions){
+      return recentPulseTimes[n];
+  } else {
+    return 0; //this will be the signal that there are no reliable predictions
+  }
+}
+
 
 //----------------------------------------------------------------------------------------------------------------------
 
@@ -215,7 +225,9 @@ class DividerMultiplier {
   bool ShouldWeOutputThruPulse();
   void InputPulse();
   void SetInOutCycleLengths(int, int);
-  void CalculateOutputTimes();
+  void CalculateOutputTimesAtCycleStart();
+  void CalculateOutputTimesMidCycle();
+  void UpdateKnobValues(int, int, int);
 } DividerMultiplierMain;
 
 
@@ -236,7 +248,7 @@ void DividerMultiplier::SetInOutCycleLengths(int in, int out){
   OutputCycleLength = out;
 }
 
-void DividerMultiplier::CalculateOutputTimes() {
+void DividerMultiplier::CalculateOutputTimesAtCycleStart() {
  //do not call this until we have enough information to do the calculations!
  ExpectedCycleEndTime = InputPulsePredictor.TimeOfNthPulse(InputCycleLength); 
 
@@ -265,9 +277,33 @@ Serial.println(ExpectedIntervalTime);
   }  
 }
 
+void DividerMultiplier::CalculateOutputTimesMidCycle(){
+  //both the input cycle time and output cycle time may have changed
+
+  //first, we need to extrapolate back to when the start of the current input cycle would have been, then calculate the cycle time from that point
+  CycleStartTime = InputPulsePredictor.TimeOflastPulsePlusN(PositionInInputCycle);
+  ExpectedCycleEndTime = InputPulsePredictor.TimeOfNthPulse(InputCycleLength-PositionInInputCycle);
+
+  if(CycleStartTime !=0 && ExpectedCycleEndTime !=0){
+  ExpectedCycleLength = ExpectedCycleEndTime - CycleStartTime;
+
+  //calculate the output times
+    ExpectedIntervalTime = ExpectedCycleLength/OutputCycleLength;
+    PulseTimes[0] = CycleStartTime;
+    PulseTimes[OutputCycleLength-1] = CycleStartTime + ExpectedCycleLength;
+    for (int i=(OutputCycleLength-1); i > 0; i--){   //calculate from the end of the cycle backwards until we get to the pulse due next
+        PulseTimes[i-1] = PulseTimes[i]-ExpectedIntervalTime;
+        if (PulseTimes[i-1]<millis()) { //PulseTimes[i] must be the next pulse due
+          PositionInOutputCycle = i;
+          break;
+        }
+    }
+  } 
+}
+
+
 // registers an input pulse. Advances the input pulse clock.  
 //if we reached the end of the cycle, loop back to the start, emit both pulses, and calculate the times for the next set of pulses
-
 void DividerMultiplier::InputPulse() {
   PositionInInputCycle = PositionInInputCycle + 1;
   
@@ -279,7 +315,7 @@ void DividerMultiplier::InputPulse() {
       CycleOutPulseStart = true;
       MainOutPulseStart = true;
       CycleStartTime = millis();
-      CalculateOutputTimes();
+      CalculateOutputTimesAtCycleStart();
   }
       
 }
@@ -316,21 +352,9 @@ bool DividerMultiplier::ShouldWeOutputMainPulse(){
   } else {
       return false;
   }
-
-  
-//  if (TransmitPulses==true){
-//    if(MainOutPulseStart){
-//      MainOutPulseStart = false; //registers that the instruction has been read
-//      return true;
-//    } else {
-//      return false;
-//    }
-//  } else {
-//      return false;
-//  }
 }
 
-bool DividerMultiplier::ShouldWeOutputThruPulse(){    //Note: pulses from "main" will ALSO be passed to the thru output in divider mode. That's not handled by this function.
+  bool DividerMultiplier::ShouldWeOutputThruPulse(){    //Note: pulses from "main" will ALSO be passed to the thru output in divider mode. That's not handled by this function.
     if(ThruPulseStart){
       ThruPulseStart = false; //registers that the instruction has been read
       return true;
@@ -339,7 +363,18 @@ bool DividerMultiplier::ShouldWeOutputThruPulse(){    //Note: pulses from "main"
       } 
 }
 
-
+//Adjust cycle paramaters without screwing up our place in the cycle
+void DividerMultiplier::UpdateKnobValues(int InCycleLengthKnobPlusCV, int OutCycleLengthKnobPlusCV, int ShuffleKnobPlusCV){
+    if (InCycleLengthKnobPlusCV != InputCycleLength){
+      InputCycleLength = InCycleLengthKnobPlusCV;
+      PositionInInputCycle = PositionInInputCycle % InputCycleLength; }
+  // to do: we need to recalculate the cycle length, and accordingly adjust the output times, and figure out where we are in the output sequence
+      
+    if (OutCycleLengthKnobPlusCV != OutputCycleLength){
+      //calculate the new set of times for the output cycle, and figure out where we are in the sequence
+    } 
+  }
+  
 
 //----------------------------------------------------------------------------------------------------------------------
 
