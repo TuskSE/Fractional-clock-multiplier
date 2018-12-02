@@ -33,6 +33,8 @@ const int Divisions_max = 16;
 const int Length_min = 1;
 const int Length_max = 16;
 //To read Knob value: reading = map(analogRead(CtrPin_Length),0,1023,Length_min,Length_max);
+int ControlValue_Divisions = 1;
+int ControlValue_Length =1;
 
 double pressTimeTemp = 0; //temporarily stores the time, when the button is pressed
 int clockInState = 0;
@@ -374,7 +376,46 @@ void DividerMultiplier::UpdateKnobValues(int InCycleLengthKnobPlusCV, int OutCyc
       //calculate the new set of times for the output cycle, and figure out where we are in the sequence
     } 
   }
+
+
+//------------------------------------------------------------------------------------------------------------------------
+//JitterSmoother is designed to filter out jitter in potentiometer voltages (and CV) which don't correspond to changes in input voltage. 
+//This very simple implementation doesn't work especially well, and risks ignoring slow CV changes (eg from a slow LFO). 
+
+class JitterSmoother { 
+  int OldValue, NewValue;
   
+  public:
+  JitterSmoother ();
+
+  int SmoothChanges(int);
+
+} JitterSmootherL, JitterSmootherD, JitterSmootherCV;
+  
+
+JitterSmoother::JitterSmoother(){   //initalize values
+ OldValue = 0;
+ NewValue = 0;
+}
+
+int JitterSmoother::SmoothChanges(int Input){
+  OldValue = NewValue;
+  NewValue = Input;
+Serial.print(OldValue);
+Serial.print("    ");
+Serial.print(NewValue);
+Serial.print("    ");
+
+if ( (NewValue - OldValue) > 10 ){
+  return NewValue;
+} else if ( (NewValue - OldValue) < -10 ){
+  return NewValue;
+}  else{
+    return OldValue;
+  }
+}
+
+
 
 //----------------------------------------------------------------------------------------------------------------------
 
@@ -421,7 +462,12 @@ void loop() {
     clockInPrevState = clockInState;
 
 
-
+  //update control values
+  ControlValue_Divisions = map(analogRead(CtrPin_Divisions),0,1023,Divisions_min,Divisions_max);
+  ControlValue_Length = map(JitterSmootherL.SmoothChanges(analogRead(CtrPin_Length)),0,1023,Length_min,Length_max);
+  DividerMultiplierMain.UpdateKnobValues(ControlValue_Length, ControlValue_Divisions, 0);
+  Serial.println(ControlValue_Length);
+  delay(100);
 
   // deal with starting output pulses
   if(DividerMultiplierMain.ShouldWeOutputThruPulse()==true){
@@ -436,9 +482,7 @@ void loop() {
     TrigOutManager_Main.StartPulse();
     TrigOutManager_Thru.StartPulse();
   }
-
-
-
+ 
 
   //deal with actually setting voltage on the outputs
   if(TrigOutManager_Thru.ShouldWeBeOutputting()==true){
@@ -459,8 +503,5 @@ void loop() {
     digitalWrite(OutPin_Cycle,LOW);
   }
 
-
-  //read knob changes
-  
   
 }
