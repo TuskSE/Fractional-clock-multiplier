@@ -384,14 +384,14 @@ void DividerMultiplier::UpdateKnobValues(int InCycleLengthKnobPlusCV, int OutCyc
 
 class JitterSmoother { 
   int OldValue, NewValue;
+  const unsigned long int SampleInterval = 60;
   
   public:
   JitterSmoother ();
-
   int SmoothChanges(int);
-
+  static unsigned long int TimeOfLastRead;
 } JitterSmootherL, JitterSmootherD, JitterSmootherCV;
-  
+
 
 JitterSmoother::JitterSmoother(){   //initalize values
  OldValue = 0;
@@ -399,17 +399,21 @@ JitterSmoother::JitterSmoother(){   //initalize values
 }
 
 int JitterSmoother::SmoothChanges(int Input){
-if ( (Input - OldValue) > 13 ){
+if ((millis() - TimeOfLastRead) > SampleInterval){
+  TimeOfLastRead = millis();
+  if ( (Input - OldValue) > 50 ){
   NewValue = Input;
-} else if ( (Input - OldValue) < -13 ){
+} else if ( (Input - OldValue) < -50 ){
   NewValue = Input;
 }  else{
     NewValue = OldValue;
   }
 OldValue = NewValue;
+}
 return NewValue;  
 }
 
+unsigned long int JitterSmoother::TimeOfLastRead = 0;  
 
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -439,6 +443,8 @@ void setup() {
 
   pinMode(InPin_Trig,INPUT_PULLUP);
   pinMode(InPin_CV,INPUT);
+  
+  analogReadRes(12);
 
   Serial.begin(9600);
 
@@ -458,11 +464,12 @@ void loop() {
 
 
   //update control values
-  ControlValue_Divisions = map(analogRead(CtrPin_Divisions),0,1023,Divisions_min,Divisions_max);
-  ControlValue_Length = map(JitterSmootherL.SmoothChanges(analogRead(CtrPin_Length)),0,1023,Length_min,Length_max);
+  ControlValue_Divisions = map(JitterSmootherD.SmoothChanges(analogRead(CtrPin_Divisions)),0,4096,Divisions_min,Divisions_max);
+  ControlValue_Length = map(JitterSmootherL.SmoothChanges(analogRead(CtrPin_Length)),0,4096,Length_min,Length_max);
   DividerMultiplierMain.UpdateKnobValues(ControlValue_Length, ControlValue_Divisions, 0);
+  Serial.print(ControlValue_Divisions);
+  Serial.print(" ");
   Serial.println(ControlValue_Length);
-  delay(100);
 
   // deal with starting output pulses
   if(DividerMultiplierMain.ShouldWeOutputThruPulse()==true){
