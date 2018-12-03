@@ -399,20 +399,15 @@ JitterSmoother::JitterSmoother(){   //initalize values
 }
 
 int JitterSmoother::SmoothChanges(int Input){
-  OldValue = NewValue;
+if ( (Input - OldValue) > 13 ){
   NewValue = Input;
-Serial.print(OldValue);
-Serial.print("    ");
-Serial.print(NewValue);
-Serial.print("    ");
-
-if ( (NewValue - OldValue) > 10 ){
-  return NewValue;
-} else if ( (NewValue - OldValue) < -10 ){
-  return NewValue;
+} else if ( (Input - OldValue) < -13 ){
+  NewValue = Input;
 }  else{
-    return OldValue;
+    NewValue = OldValue;
   }
+OldValue = NewValue;
+return NewValue;  
 }
 
 
