@@ -33,6 +33,7 @@ const int Divisions_max = 16;
 const int Length_min = 1;
 const int Length_max = 16;
 //To read Knob value: reading = map(analogRead(CtrPin_Length),0,1023,Length_min,Length_max);
+int ControlVoltage_in = 0;
 int ControlValue_Divisions = 1;
 int ControlValue_Length =1;
 
@@ -374,6 +375,8 @@ void DividerMultiplier::UpdateKnobValues(int InCycleLengthKnobPlusCV, int OutCyc
       
     if (OutCycleLengthKnobPlusCV != OutputCycleLength){
       //calculate the new set of times for the output cycle, and figure out where we are in the sequence
+      OutputCycleLength = OutCycleLengthKnobPlusCV;
+      DividerMultiplier::CalculateOutputTimesMidCycle();
     } 
   }
 
