@@ -1,4 +1,5 @@
 #include <Metro.h> // Include the Metro library
+#include <Encoder.h>
 
 //Define all the pins
 const int SwPin_DivEuc = 0;
@@ -9,8 +10,6 @@ const int SwPin_Encoder = 6;
 const int CtrPin_CVamt = 21;
 const int CtrPin_Divisions = 20;
 const int CtrPin_Length = 19;
-const int EncPinA = 4;
-const int EncPinB = 5;
 const int OutPin_Cycle = 7;
 const int OutPin_MainOut = 8;
 const int OutPin_Thru = 9;
@@ -18,6 +17,8 @@ const int InPin_Trig = 18; //Low input voltage = HIGH reading on pin.
 const int InPin_CV = 17;
 const int LEDPin_Shuffle = 16;
 const int LEDPin_internal = 13;
+const int EncPinA = 4;
+const int EncPinB = 5;
 
 //recentPresses[] stores the times of the 6 most recent switch presses
 //[0] = most recent, [5] = most distant
@@ -45,6 +46,9 @@ int clockInPrevState = 0; // this will remember if the clock input was "on" in t
 //float ClicksPerCycle = 8;
 float MultDivFactor2 = 2;
 float MultDivFactor3 = 0.5;
+
+Encoder EncKnob(EncPinB, EncPinA);
+int EncoderValTemp = 0;
 
 //-------------------------------------------------------------------------------------------------------------------
 
@@ -430,9 +434,6 @@ void setup() {
   pinMode(SwPin_CVup,INPUT_PULLUP);
   pinMode(SwPin_CVdown,INPUT_PULLUP);
   pinMode(SwPin_Encoder,INPUT);
-
-  pinMode(EncPinA,INPUT_PULLUP);
-  pinMode(EncPinB,INPUT_PULLUP);
   
   pinMode(CtrPin_CVamt,INPUT);
   pinMode(CtrPin_Divisions,INPUT);
@@ -451,6 +452,7 @@ void setup() {
 
   Serial.begin(9600);
 
+  EncKnob.write(0);
 }
 
 
@@ -475,6 +477,9 @@ void loop() {
   ControlValue_Divisions = map(JitterSmootherD.SmoothChanges(analogRead(CtrPin_Divisions)),0,4096,Divisions_min,Divisions_max);
 
   DividerMultiplierMain.UpdateKnobValues(ControlValue_Length, ControlValue_Divisions, 0);
+
+  EncoderValTemp = EncKnob.read();
+  Serial.println(EncoderValTemp);
 
   // deal with starting output pulses
   if(DividerMultiplierMain.ShouldWeOutputThruPulse()==true){
