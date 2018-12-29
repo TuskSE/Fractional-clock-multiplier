@@ -50,6 +50,8 @@ float MultDivFactor3 = 0.5;
 Encoder EncKnob(EncPinB, EncPinA);
 int EncoderValTemp = 0;
 const int EncoderCountsPerClick = 4; //property of the encoder used: how many digital output counts corresponding to one click (indent) felt by the user.
+//const int EncoderClicksPerRevolution = 20; //property of the encoder used 
+int EncoderShuffleNoOfClicks = 20; //The number of clicks of encoder rotation which makes the shuffle amount return to it's starting value
 
 //-------------------------------------------------------------------------------------------------------------------
 
@@ -222,8 +224,9 @@ bool TrigOutManager::ShouldWeBeOutputting(){
 
 class DividerMultiplier {
   int InputCycleLength,OutputCycleLength,PositionInInputCycle,PositionInOutputCycle,NewPositionTemp;
-  unsigned long int ExpectedCycleLength, CycleStartTime, ExpectedCycleEndTime, ExpectedIntervalTime, PulseTimes[16];
+  unsigned long int ExpectedCycleLength, CycleStartTime, ExpectedCycleEndTime, ExpectedIntervalTime, PulseTimes[16], ShuffleTime;
   bool CycleOutPulseStart, MainOutPulseStart, ThruPulseStart, TransmitPulses;
+  float fractionalShuffle; //The fraction of an output beat by which the output should be delayed. Expected value between 0 and 1.  
   
   public:
   DividerMultiplier ();
@@ -237,6 +240,7 @@ class DividerMultiplier {
   void CalculateOutputTimesMidCycle();
   void UpdateKnobValues(int, int, int);
   void ShiftPositionInInputCycle(int);
+  void UpdateFractionalShuffleTime(float);
 } DividerMultiplierMain;
 
 
@@ -251,6 +255,7 @@ DividerMultiplier::DividerMultiplier(){   //initalize values
   PositionInOutputCycle = 0; 
   CycleStartTime = 0;
   NewPositionTemp = 0;
+  fractionalShuffle = 0.0;
 }
 
 void DividerMultiplier::SetInOutCycleLengths(int in, int out){
@@ -268,11 +273,16 @@ void DividerMultiplier::CalculateOutputTimesAtCycleStart() {
   ExpectedIntervalTime = ExpectedCycleLength/OutputCycleLength;
   
   PulseTimes[0] = CycleStartTime;
+  
+  //apply shuffle
+  PulseTimes[0] = PulseTimes[0] + (fractionalShuffle*ExpectedIntervalTime);
 
+  //calculate the remaining output pulse times
     for (int i=1; i < OutputCycleLength; i++){
       PulseTimes[i] = PulseTimes[i-1]+ExpectedIntervalTime;
     }
-  }  
+  }
+
 }
 
 void DividerMultiplier::CalculateOutputTimesMidCycle(){
@@ -285,10 +295,10 @@ void DividerMultiplier::CalculateOutputTimesMidCycle(){
   if(CycleStartTime !=0 && ExpectedCycleEndTime !=0){
   ExpectedCycleLength = ExpectedCycleEndTime - CycleStartTime;
 
-  //calculate the output times
+  //calculate the output times, adjusting for shuffle
     ExpectedIntervalTime = ExpectedCycleLength/OutputCycleLength;
-    PulseTimes[0] = CycleStartTime;
-    PulseTimes[OutputCycleLength-1] = CycleStartTime + ExpectedCycleLength;
+    PulseTimes[0] = CycleStartTime + (fractionalShuffle*ExpectedIntervalTime);
+    PulseTimes[OutputCycleLength-1] = CycleStartTime + ExpectedCycleLength + (fractionalShuffle*ExpectedIntervalTime);
     for (int i=(OutputCycleLength-1); i > 0; i--){   //calculate from the end of the cycle backwards until we get to the pulse due next
         PulseTimes[i-1] = PulseTimes[i]-ExpectedIntervalTime;
         if (PulseTimes[i-1]<millis()) { //PulseTimes[i] must be the next pulse due
@@ -311,7 +321,7 @@ void DividerMultiplier::InputPulse() {
       PositionInInputCycle = 0;
       PositionInOutputCycle = 0;
       CycleOutPulseStart = true;
-      MainOutPulseStart = true;
+;      if(fractionalShuffle == 0.0){MainOutPulseStart = true;}
       CycleStartTime = millis();
       CalculateOutputTimesAtCycleStart();
   }
@@ -392,17 +402,32 @@ void DividerMultiplier::ShiftPositionInInputCycle(int AmoutToShiftBy){
     NewPositionTemp = NewPositionTemp + InputCycleLength;
   }
 
-  Serial.print("cycle length ");
-  Serial.println(InputCycleLength);
-  Serial.print("Old Position ");
-  Serial.println(PositionInInputCycle);
-  Serial.print("NewPosition ");
-  Serial.println(NewPositionTemp);
-
   PositionInInputCycle = NewPositionTemp;
   DividerMultiplier::CalculateOutputTimesMidCycle();  // update output times to reflect where we now are in the input cycle
   
 }
+
+void DividerMultiplier::UpdateFractionalShuffleTime(float AmountToChangeBy){
+  fractionalShuffle = fractionalShuffle + AmountToChangeBy;
+
+  //force result to a value between 0 and 1;
+    while (fractionalShuffle < 0 ){
+      fractionalShuffle  = fractionalShuffle + 1.0;
+    }
+  
+    while (fractionalShuffle >= 1){
+      fractionalShuffle  = fractionalShuffle - 1.0;
+    }
+
+  //Set brightness of the shuffle indicator LED to reflect the amount of shuffle
+  analogWrite(LEDPin_Shuffle, fractionalShuffle*40);
+
+  //update output times accordingly
+  DividerMultiplier::CalculateOutputTimesMidCycle();
+  
+  
+}
+
 
 //------------------------------------------------------------------------------------------------------------------------
 //JitterSmoother is designed to filter out jitter in potentiometer voltages (and CV) which don't correspond to changes in input voltage. 
@@ -510,6 +535,7 @@ void loop() {
          DividerMultiplierMain.ShiftPositionInInputCycle(EncoderValTemp/EncoderCountsPerClick);
       } else if(digitalRead(SwPin_Encoder)==1){
          //if the encoder switch *was* pushed, update a shuffle paramater 
+         DividerMultiplierMain.UpdateFractionalShuffleTime((float)(-EncoderValTemp/EncoderCountsPerClick)/(float)EncoderShuffleNoOfClicks);
       }
 
       EncKnob.write(0); //reset encoder reading to zero
