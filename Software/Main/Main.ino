@@ -49,6 +49,7 @@ float MultDivFactor3 = 0.5;
 
 Encoder EncKnob(EncPinB, EncPinA);
 int EncoderValTemp = 0;
+const int EncoderCountsPerClick = 4; //property of the encoder used: how many digital output counts corresponding to one click (indent) felt by the user.
 
 //-------------------------------------------------------------------------------------------------------------------
 
@@ -171,7 +172,7 @@ unsigned long int PulsePredictor::TimeOflastPulsePlusN (int n){
 
 //----------------------------------------------------------------------------------------------------------------------
 
-// the TrigOutManager is called on to generate output pulses, and handles e.g. the timing of said pulses.
+// the TrigOutManager is called on to generate output pulses, and handles e.g. giving said pulses a finite length
 
 class TrigOutManager {
   unsigned long TrigLengthMicros, CurrentPulseEndtimeMicros; //Length of trigger pulse in microseconds
@@ -220,7 +221,7 @@ bool TrigOutManager::ShouldWeBeOutputting(){
 // To space out pulses correctly, it must recieve information about how long the cycle is expected to last. 
 
 class DividerMultiplier {
-  int InputCycleLength,OutputCycleLength,PositionInInputCycle,PositionInOutputCycle;
+  int InputCycleLength,OutputCycleLength,PositionInInputCycle,PositionInOutputCycle,NewPositionTemp;
   unsigned long int ExpectedCycleLength, CycleStartTime, ExpectedCycleEndTime, ExpectedIntervalTime, PulseTimes[16];
   bool CycleOutPulseStart, MainOutPulseStart, ThruPulseStart, TransmitPulses;
   
@@ -235,6 +236,7 @@ class DividerMultiplier {
   void CalculateOutputTimesAtCycleStart();
   void CalculateOutputTimesMidCycle();
   void UpdateKnobValues(int, int, int);
+  void ShiftPositionInInputCycle(int);
 } DividerMultiplierMain;
 
 
@@ -248,6 +250,7 @@ DividerMultiplier::DividerMultiplier(){   //initalize values
   PositionInInputCycle = 0;
   PositionInOutputCycle = 0; 
   CycleStartTime = 0;
+  NewPositionTemp = 0;
 }
 
 void DividerMultiplier::SetInOutCycleLengths(int in, int out){
@@ -264,22 +267,10 @@ void DividerMultiplier::CalculateOutputTimesAtCycleStart() {
   ExpectedCycleLength = ExpectedCycleEndTime - CycleStartTime;
   ExpectedIntervalTime = ExpectedCycleLength/OutputCycleLength;
   
-Serial.println(" ");
-Serial.print(CycleStartTime);
-Serial.print("  to   ");
-Serial.println(ExpectedCycleEndTime);
-
-Serial.println(ExpectedIntervalTime);
-
-  
   PulseTimes[0] = CycleStartTime;
-      Serial.print(PulseTimes[0]);
-      Serial.print(" ");
-  
+
     for (int i=1; i < OutputCycleLength; i++){
       PulseTimes[i] = PulseTimes[i-1]+ExpectedIntervalTime;
-      Serial.print(PulseTimes[i]);
-      Serial.print(" ");
     }
   }  
 }
@@ -384,6 +375,34 @@ void DividerMultiplier::UpdateKnobValues(int InCycleLengthKnobPlusCV, int OutCyc
     } 
   }
 
+//change our position in the input cycle
+void DividerMultiplier::ShiftPositionInInputCycle(int AmoutToShiftBy){
+  NewPositionTemp = PositionInInputCycle + AmoutToShiftBy;
+
+  //code elswhere expect "position in cycle" to be within a range of 0 .... N-1, where N is cycle length.
+  //if we've ended up with a position outside this range, find the equivalent value within the range
+  
+  if (NewPositionTemp >= InputCycleLength){
+    NewPositionTemp = NewPositionTemp + 1; //shift to a frame in which we count from 1 ... N, rather than 0 .... N-1, where N is cycle length
+    NewPositionTemp = NewPositionTemp % InputCycleLength;
+    NewPositionTemp = NewPositionTemp - 1; //shift back
+  }
+
+  while (NewPositionTemp < 0){
+    NewPositionTemp = NewPositionTemp + InputCycleLength;
+  }
+
+  Serial.print("cycle length ");
+  Serial.println(InputCycleLength);
+  Serial.print("Old Position ");
+  Serial.println(PositionInInputCycle);
+  Serial.print("NewPosition ");
+  Serial.println(NewPositionTemp);
+
+  PositionInInputCycle = NewPositionTemp;
+  DividerMultiplier::CalculateOutputTimesMidCycle();  // update output times to reflect where we now are in the input cycle
+  
+}
 
 //------------------------------------------------------------------------------------------------------------------------
 //JitterSmoother is designed to filter out jitter in potentiometer voltages (and CV) which don't correspond to changes in input voltage. 
@@ -421,6 +440,9 @@ return NewValue;
 }
 
 unsigned long int JitterSmoother::TimeOfLastRead = 0;  
+
+//----------------------------------------------------------------------------------------------------------------------
+
 
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -478,8 +500,22 @@ void loop() {
 
   DividerMultiplierMain.UpdateKnobValues(ControlValue_Length, ControlValue_Divisions, 0);
 
-  EncoderValTemp = EncKnob.read();
-  Serial.println(EncoderValTemp);
+  //check if the encoder has been turned since the last cycle
+  EncoderValTemp = -EncKnob.read();
+  
+  if (EncoderValTemp !=  0){
+    if((EncoderValTemp % EncoderCountsPerClick) == 0){  //if this is not true, the knob has not reached an indent yet and must be mid-turn - do nothing     
+      if(digitalRead(SwPin_Encoder)==0){
+         //if the encoder switch was *not* pushed, we update a shift paramater
+         DividerMultiplierMain.ShiftPositionInInputCycle(EncoderValTemp/EncoderCountsPerClick);
+      } else if(digitalRead(SwPin_Encoder)==1){
+         //if the encoder switch *was* pushed, update a shuffle paramater 
+      }
+
+      EncKnob.write(0); //reset encoder reading to zero
+    }
+  }
+
 
   // deal with starting output pulses
   if(DividerMultiplierMain.ShouldWeOutputThruPulse()==true){
