@@ -35,8 +35,8 @@ const int Length_min = 1;
 const int Length_max = 16;
 //To read Knob value: reading = map(analogRead(CtrPin_Length),0,1023,Length_min,Length_max);
 int ControlVoltage_in = 0;
-int ControlValue_Divisions = 1;
-int ControlValue_Length =1;
+int ControlValue_Divisions, ControlValue_Divisions_Scaled = 1;
+int ControlValue_Length, ControlValue_Length_Scaled =1;
 
 double pressTimeTemp = 0; //temporarily stores the time, when the button is pressed
 int clockInState = 0;
@@ -52,6 +52,9 @@ int EncoderValTemp = 0;
 const int EncoderCountsPerClick = 4; //property of the encoder used: how many digital output counts corresponding to one click (indent) felt by the user.
 //const int EncoderClicksPerRevolution = 20; //property of the encoder used 
 int EncoderShuffleNoOfClicks = 20; //The number of clicks of encoder rotation which makes the shuffle amount return to it's starting value
+
+bool CVcontrolCycleLength, CVcontrolDivisions, CVcontrolShuffle, CVcontrolShift;
+
 
 //-------------------------------------------------------------------------------------------------------------------
 
@@ -435,10 +438,12 @@ void DividerMultiplier::UpdateFractionalShuffleTime(float AmountToChangeBy){
 
 class JitterSmoother { 
   int OldValue, NewValue;
-  const unsigned long int SampleInterval = 60;
+  unsigned long int SampleInterval = 60;
+  int Threshold;
   
   public:
   JitterSmoother ();
+  void SetSampleIntervalandThreshold(unsigned long int,int);
   int SmoothChanges(int);
   static unsigned long int TimeOfLastRead;
 } JitterSmootherL, JitterSmootherD, JitterSmootherCV;
@@ -447,14 +452,16 @@ class JitterSmoother {
 JitterSmoother::JitterSmoother(){   //initalize values
  OldValue = 0;
  NewValue = 0;
+ SampleInterval = 60;
+ Threshold = 50;
 }
 
 int JitterSmoother::SmoothChanges(int Input){
 if ((millis() - TimeOfLastRead) > SampleInterval){
   TimeOfLastRead = millis();
-  if ( (Input - OldValue) > 50 ){
+  if ( (Input - OldValue) > Threshold ){
   NewValue = Input;
-} else if ( (Input - OldValue) < -50 ){
+} else if ( (Input - OldValue) < -Threshold ){
   NewValue = Input;
 }  else{
     NewValue = OldValue;
@@ -462,6 +469,11 @@ if ((millis() - TimeOfLastRead) > SampleInterval){
 OldValue = NewValue;
 }
 return NewValue;  
+}
+
+void JitterSmoother::SetSampleIntervalandThreshold(unsigned long int NewSampleInt, int NewThreshold){
+  SampleInterval = NewSampleInt;
+  Threshold = NewThreshold;
 }
 
 unsigned long int JitterSmoother::TimeOfLastRead = 0;  
@@ -472,15 +484,15 @@ unsigned long int JitterSmoother::TimeOfLastRead = 0;
 class CVassigner {
   bool SwPin_CVup_State;
   bool SwPin_CVdown_State;
-  bool CVcontrolCycleLength, CVcontrolDivisions, CVcontrolShuffle, CVcontrolShift;
+//  bool CVcontrolCycleLength, CVcontrolDivisions, CVcontrolShuffle, CVcontrolShift;   <-- I made these to global for now
   float ControlValue_Attenuverter, ControlValue_CVin;
+  int CVzeroReading; //the analogRead that results when the control votlage = 0;
+  const int CVscalingFactor = 20000; //scales the output of CVassigner::readCV to give an output within +- ~10.00
 
   public:
   CVassigner ();
   void UpdateCVrouting();
   float readCV();
-  
-
   
 } CVassignerMaster;
 
@@ -493,6 +505,7 @@ CVassigner::CVassigner(){  //default starting state is for CV to control divisio
   CVcontrolShift = false;
   ControlValue_Attenuverter = 0;
   ControlValue_CVin = 0;
+  CVzeroReading = 1710; //this is measured empirically and then hard-coded, for now.
 }
 
 void CVassigner::UpdateCVrouting(){
@@ -520,12 +533,20 @@ void CVassigner::UpdateCVrouting(){
   }
 }
 
+//read CV will return an value between +- 10.00, scaled by the attenuverter (CV amt) knob
 float CVassigner::readCV(){
   ControlValue_Attenuverter = map(analogRead(CtrPin_CVamt),0,4096,-100,+100);
-  ControlValue_Attenuverter = map(analogRead(CtrPin_CVamt),0,4096,-100,+100);
-  ControlValue_CVin = map(analogRead(InPin_CV),0,4096,0,+100);
-  //Serial.println(ControlValue_Attenuverter);
-  Serial.println(ControlValue_CVin);
+  ControlValue_Attenuverter = map(analogRead(CtrPin_CVamt),0,4096,-100,+100);  //read twice to give time for the ADC capacitor to equilibrate, avoiding crosstalk from other analog reads 
+  //aside: do we need a voltage smoother on the above?
+  ControlValue_CVin = analogRead(InPin_CV)-CVzeroReading;
+  ControlValue_CVin = analogRead(InPin_CV)-CVzeroReading; //read twice to give time for the ADC capacitor to equilibrate, avoiding crosstalk from other analog reads 
+
+//  Serial.print(ControlValue_Attenuverter);
+//  Serial.print(" ");
+//  Serial.print(ControlValue_CVin);
+//  Serial.print(" ");
+//  Serial.println(ControlValue_Attenuverter*ControlValue_CVin/CVscalingFactor);
+  
   return ControlValue_Attenuverter*ControlValue_CVin;
 }
 
@@ -560,6 +581,8 @@ void setup() {
   Serial.begin(9600);
 
   EncKnob.write(0);
+
+  JitterSmootherCV.SetSampleIntervalandThreshold(30,50); //tunes the smoothing algorith for the control voltage
 }
 
 
@@ -576,15 +599,22 @@ void loop() {
     clockInPrevState = clockInState;
 
 
-  //update control values
+  //update knob control values
   //we repeat the reading twice, because if we take the first reading, it will still have some residual influence from the previous reading because the capacitor hasn't had time to charge/discharge. 
-  ControlValue_Length = map(JitterSmootherL.SmoothChanges(analogRead(CtrPin_Length)),0,4096,Length_min,Length_max);
-  ControlValue_Length = map(JitterSmootherL.SmoothChanges(analogRead(CtrPin_Length)),0,4096,Length_min,Length_max);
-  ControlValue_Divisions = map(JitterSmootherD.SmoothChanges(analogRead(CtrPin_Divisions)),0,4096,Divisions_min,Divisions_max);
-  ControlValue_Divisions = map(JitterSmootherD.SmoothChanges(analogRead(CtrPin_Divisions)),0,4096,Divisions_min,Divisions_max);
-  // TO DO: do we want the smoother engaged on both reads?
+  ControlValue_Length = analogRead(CtrPin_Length);
+  ControlValue_Length = JitterSmootherL.SmoothChanges(analogRead(CtrPin_Length));
+  ControlValue_Divisions = analogRead(CtrPin_Divisions);
+  ControlValue_Divisions = JitterSmootherD.SmoothChanges(analogRead(CtrPin_Divisions));
 
-  DividerMultiplierMain.UpdateKnobValues(ControlValue_Length, ControlValue_Divisions, 0);
+  //TO DO HERE: ADD CONTROL VOLTAGE TO KNOB VALUE, AS APPROPRIATE
+
+  //scale control values to be within specified range
+  ControlValue_Length_Scaled = map(ControlValue_Length,0,4096,Length_min,Length_max);
+  ControlValue_Divisions_Scaled = map(ControlValue_Divisions,0,4096,Divisions_min,Divisions_max);
+
+  Serial.println(ControlValue_Divisions_Scaled);
+  
+  DividerMultiplierMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, 0);
 
   //check if the encoder has been turned since the last cycle
   EncoderValTemp = -EncKnob.read();
