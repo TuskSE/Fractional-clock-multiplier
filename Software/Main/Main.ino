@@ -468,6 +468,66 @@ unsigned long int JitterSmoother::TimeOfLastRead = 0;
 
 //----------------------------------------------------------------------------------------------------------------------
 
+//the CV assigner will control the routing of CV signals. Currently, everything is controlled by a 3-way switch and this scheme is a bit overkill. but I might want something more sophisticated in future.
+class CVassigner {
+  bool SwPin_CVup_State;
+  bool SwPin_CVdown_State;
+  bool CVcontrolCycleLength, CVcontrolDivisions, CVcontrolShuffle, CVcontrolShift;
+  float ControlValue_Attenuverter, ControlValue_CVin;
+
+  public:
+  CVassigner ();
+  void UpdateCVrouting();
+  float readCV();
+  
+
+  
+} CVassignerMaster;
+
+CVassigner::CVassigner(){  //default starting state is for CV to control divisions
+  SwPin_CVup_State = false;
+  SwPin_CVdown_State = false;
+  CVcontrolCycleLength = false;
+  CVcontrolDivisions = true;
+  CVcontrolShuffle = false;
+  CVcontrolShift = false;
+  ControlValue_Attenuverter = 0;
+  ControlValue_CVin = 0;
+}
+
+void CVassigner::UpdateCVrouting(){
+  if ( SwPin_CVup_State != digitalRead(SwPin_CVup) || SwPin_CVdown_State != digitalRead(SwPin_CVdown)  ){   //if the CV switch has changed position
+    SwPin_CVup_State = digitalRead(SwPin_CVup);
+    SwPin_CVdown_State = digitalRead(SwPin_CVdown);
+    if( (SwPin_CVup_State == true) && (SwPin_CVdown_State == false) ){
+      CVcontrolCycleLength = true;
+      CVcontrolDivisions = false;
+      CVcontrolShuffle = false;
+      CVcontrolShift = false;
+    }else if( (SwPin_CVup_State == true) && (SwPin_CVdown_State == true) ){  //switch in middle position. This might be false/false, depending on the switch, I guess
+      CVcontrolCycleLength = false;
+      CVcontrolDivisions = true;
+      CVcontrolShuffle = false;
+      CVcontrolShift = false;
+    }else if( (SwPin_CVup_State == false) && (SwPin_CVdown_State == true) ){
+      CVcontrolCycleLength = false;
+      CVcontrolDivisions = false;
+      CVcontrolShuffle = true;
+      CVcontrolShift = false;
+    }else{
+      //Serial.println("ERROR: the CV assign switch is both up and down!");
+    }
+  }
+}
+
+float CVassigner::readCV(){
+  ControlValue_Attenuverter = map(analogRead(CtrPin_CVamt),0,4096,-100,+100);
+  ControlValue_Attenuverter = map(analogRead(CtrPin_CVamt),0,4096,-100,+100);
+  ControlValue_CVin = map(analogRead(InPin_CV),0,4096,0,+100);
+  //Serial.println(ControlValue_Attenuverter);
+  Serial.println(ControlValue_CVin);
+  return ControlValue_Attenuverter*ControlValue_CVin;
+}
 
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -522,11 +582,16 @@ void loop() {
   ControlValue_Length = map(JitterSmootherL.SmoothChanges(analogRead(CtrPin_Length)),0,4096,Length_min,Length_max);
   ControlValue_Divisions = map(JitterSmootherD.SmoothChanges(analogRead(CtrPin_Divisions)),0,4096,Divisions_min,Divisions_max);
   ControlValue_Divisions = map(JitterSmootherD.SmoothChanges(analogRead(CtrPin_Divisions)),0,4096,Divisions_min,Divisions_max);
+  // TO DO: do we want the smoother engaged on both reads?
 
   DividerMultiplierMain.UpdateKnobValues(ControlValue_Length, ControlValue_Divisions, 0);
 
   //check if the encoder has been turned since the last cycle
   EncoderValTemp = -EncKnob.read();
+
+  //check routing of CV signals
+  CVassignerMaster.UpdateCVrouting();
+  CVassignerMaster.readCV();
   
   if (EncoderValTemp !=  0){
     if((EncoderValTemp % EncoderCountsPerClick) == 0){  //if this is not true, the knob has not reached an indent yet and must be mid-turn - do nothing     
