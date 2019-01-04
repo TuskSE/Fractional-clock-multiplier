@@ -486,16 +486,13 @@ class CVassigner {
   bool SwPin_CVdown_State;
 //  bool CVcontrolCycleLength, CVcontrolDivisions, CVcontrolShuffle, CVcontrolShift;   <-- I made these to global for now
   float ControlValue_Attenuverter, ControlValue_CVin;
-  int CVzeroReading, ShiftModifierOld, ShiftModifierNew; //the analogRead that results when the control votlage = 0;
-  const int CVscalingFactor = 80; //scales the output of CVassigner::readCV to give a result <2000
-  const int ShiftCVScalingFactor = 200; //scales the effect CVassigner::ReturnShiftModifier
+  int CVzeroReading; //the analogRead that results when the control votlage = 0;
+  const int CVscalingFactor = 20000; //scales the output of CVassigner::readCV to give an output within +- ~10.00
 
   public:
   CVassigner ();
   void UpdateCVrouting();
-  int readCV();
-  int ReturnShiftModifier();
-  float ReturnFractionalShuffleModifier();
+  float readCV();
   
 } CVassignerMaster;
 
@@ -508,8 +505,6 @@ CVassigner::CVassigner(){  //default starting state is for CV to control divisio
   CVcontrolShift = false;
   ControlValue_Attenuverter = 0;
   ControlValue_CVin = 0;
-  ShiftModifierOld = 0;
-  ShiftModifierNew = 0;
   CVzeroReading = 1710; //this is measured empirically and then hard-coded, for now.
 }
 
@@ -531,17 +526,17 @@ void CVassigner::UpdateCVrouting(){
       CVcontrolCycleLength = false;
       CVcontrolDivisions = false;
       CVcontrolShuffle = true;
-      CVcontrolShift = true;
+      CVcontrolShift = false;
     }else{
       //Serial.println("ERROR: the CV assign switch is both up and down!");
     }
   }
 }
 
-//read CV will return an value between +- ~4000, scaled by the attenuverter (CV amt) knob. 
-int CVassigner::readCV(){
-  ControlValue_Attenuverter = map(analogRead(CtrPin_CVamt),0,4096,+100,-100);
-  ControlValue_Attenuverter = map(analogRead(CtrPin_CVamt),0,4096,+100,-100);  //read twice to give time for the ADC capacitor to equilibrate, avoiding crosstalk from other analog reads 
+//read CV will return an value between +- 10.00, scaled by the attenuverter (CV amt) knob
+float CVassigner::readCV(){
+  ControlValue_Attenuverter = map(analogRead(CtrPin_CVamt),0,4096,-100,+100);
+  ControlValue_Attenuverter = map(analogRead(CtrPin_CVamt),0,4096,-100,+100);  //read twice to give time for the ADC capacitor to equilibrate, avoiding crosstalk from other analog reads 
   //aside: do we need a voltage smoother on the above?
   ControlValue_CVin = analogRead(InPin_CV)-CVzeroReading;
   ControlValue_CVin = analogRead(InPin_CV)-CVzeroReading; //read twice to give time for the ADC capacitor to equilibrate, avoiding crosstalk from other analog reads 
@@ -549,28 +544,11 @@ int CVassigner::readCV(){
 //  Serial.print(ControlValue_Attenuverter);
 //  Serial.print(" ");
 //  Serial.print(ControlValue_CVin);
-//  Serial.println((int)ControlValue_Attenuverter*ControlValue_CVin/CVscalingFactor);
+//  Serial.print(" ");
+//  Serial.println(ControlValue_Attenuverter*ControlValue_CVin/CVscalingFactor);
   
-  return (int)(ControlValue_Attenuverter*ControlValue_CVin/CVscalingFactor);
+  return ControlValue_Attenuverter*ControlValue_CVin;
 }
-
-
-int CVassigner::ReturnShiftModifier(){
-  //the main fuction controlling shift takes an integer input, which is the amount to shift by: void DividerMultiplier::ShiftPositionInInputCycle(int AmoutToShiftBy)
-  //we need to keep track of an overall shift related to CV, and send a signal to that fuction only when control voltage changes cause that shift to change
-  
-  if ( CVcontrolShift == false ) { return 0; } else {
-    ShiftModifierOld = ShiftModifierNew; //rememebred from last function call
-    ShiftModifierNew = (int)(JitterSmootherCV.SmoothChanges(CVassigner::readCV())/200);
-    return ShiftModifierNew-ShiftModifierOld;
-  }
-  
-}
-
-
-//float CVassigner::ReturnFractionalShuffleModifier(){
-  
-//}
 
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -604,6 +582,7 @@ void setup() {
 
   EncKnob.write(0);
 
+  JitterSmootherCV.SetSampleIntervalandThreshold(30,50); //tunes the smoothing algorith for the control voltage
 }
 
 
@@ -623,31 +602,18 @@ void loop() {
   //update knob control values
   //we repeat the reading twice, because if we take the first reading, it will still have some residual influence from the previous reading because the capacitor hasn't had time to charge/discharge. 
   ControlValue_Length = analogRead(CtrPin_Length);
-  ControlValue_Length = analogRead(CtrPin_Length);
+  ControlValue_Length = JitterSmootherL.SmoothChanges(analogRead(CtrPin_Length));
   ControlValue_Divisions = analogRead(CtrPin_Divisions);
-  ControlValue_Divisions = analogRead(CtrPin_Divisions);
+  ControlValue_Divisions = JitterSmootherD.SmoothChanges(analogRead(CtrPin_Divisions));
 
-  //add control voltage to knob value as appriate
-  //Prevent the voltage from pushing the control value beyond the normal range of the knob. 
-  if (CVcontrolCycleLength == true){
-    ControlValue_Length = ControlValue_Length + CVassignerMaster.readCV();
-    if(ControlValue_Length < 0){ControlValue_Length = 0;}
-    if(ControlValue_Length > 4096){ControlValue_Length = 4096;}
-  }
-  if(CVcontrolDivisions == true){
-    ControlValue_Divisions = ControlValue_Divisions + CVassignerMaster.readCV();
-    if(ControlValue_Divisions < 0){ControlValue_Divisions = 0;}
-    if(ControlValue_Divisions > 4096){ControlValue_Divisions = 4096;}
-  }
+  //TO DO HERE: ADD CONTROL VOLTAGE TO KNOB VALUE, AS APPROPRIATE
 
   //scale control values to be within specified range
-  //engage the Jitter Smoother at this point, to filter out noise in the combined (knob + Control voltage) signal
-  ControlValue_Length_Scaled = map(JitterSmootherL.SmoothChanges(ControlValue_Length),0,4096,Length_min,Length_max);
-  ControlValue_Divisions_Scaled = map(JitterSmootherD.SmoothChanges(ControlValue_Divisions),0,4096,Divisions_min,Divisions_max);
+  ControlValue_Length_Scaled = map(ControlValue_Length,0,4096,Length_min,Length_max);
+  ControlValue_Divisions_Scaled = map(ControlValue_Divisions,0,4096,Divisions_min,Divisions_max);
 
-  //TO DO: put smoothing on these numbers?
-
-  //send control values to the brain
+  Serial.println(ControlValue_Divisions_Scaled);
+  
   DividerMultiplierMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, 0);
 
   //check if the encoder has been turned since the last cycle
@@ -655,8 +621,7 @@ void loop() {
 
   //check routing of CV signals
   CVassignerMaster.UpdateCVrouting();
-
-  CVassignerMaster.ReturnShiftModifier();
+  CVassignerMaster.readCV();
   
   if (EncoderValTemp !=  0){
     if((EncoderValTemp % EncoderCountsPerClick) == 0){  //if this is not true, the knob has not reached an indent yet and must be mid-turn - do nothing     
