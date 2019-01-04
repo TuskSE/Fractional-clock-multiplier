@@ -35,8 +35,8 @@ const int Length_min = 1;
 const int Length_max = 16;
 //To read Knob value: reading = map(analogRead(CtrPin_Length),0,1023,Length_min,Length_max);
 int ControlVoltage_in = 0;
-int ControlValue_Divisions, ControlValue_Divisions_Scaled = 1;
-int ControlValue_Length, ControlValue_Length_Scaled =1;
+int ControlValue_Divisions, ControlValue_Divisions_Smoothed, ControlValue_Divisions_Scaled = 1;
+int ControlValue_Length, ControlValue_Length_Smoothed, ControlValue_Length_Scaled =1;
 
 double pressTimeTemp = 0; //temporarily stores the time, when the button is pressed
 int clockInState = 0;
@@ -49,12 +49,14 @@ float MultDivFactor3 = 0.5;
 
 Encoder EncKnob(EncPinB, EncPinA);
 int EncoderValTemp = 0;
+int EncoderShiftInstruction = 0;
 const int EncoderCountsPerClick = 4; //property of the encoder used: how many digital output counts corresponding to one click (indent) felt by the user.
 //const int EncoderClicksPerRevolution = 20; //property of the encoder used 
 int EncoderShuffleNoOfClicks = 20; //The number of clicks of encoder rotation which makes the shuffle amount return to it's starting value
 
 bool CVcontrolCycleLength, CVcontrolDivisions, CVcontrolShuffle, CVcontrolShift;
 
+int Temp;
 
 //-------------------------------------------------------------------------------------------------------------------
 
@@ -70,7 +72,7 @@ const int predictedFuturePulseTimesArraySize = 16;
 class PulsePredictor {
   unsigned long int recentPulseTimes[recentPulseTimesArraySize];    //remembers the absolute time of the previous 10 pulses
   unsigned long int predictedFuturePulseTimes[16]; //predicts the absolute time of the next 16 pulses
-  signed long int PredictionError[4]; //for the previous 10 pulses, record the difference between the actual pulse time and what was predicted
+  signed long int PredictionError[4]; //for the previous N pulses, record the difference between the actual pulse time and what was predicted
   bool TrustworthyPulsePredictions; // records whether the incoming clock is predictable
   bool PulseRecieved; //notes when a pulse has been recieved
   bool TransmitPulse; //notes when a pulse should be transmitted to downstream code segments
@@ -132,7 +134,7 @@ void PulsePredictor::CheckReliability (){
   }
 
   if (sum < 10) { TrustworthyPulsePredictions = true; } else
-  { TrustworthyPulsePredictions = true; }
+  { TrustworthyPulsePredictions = false; }
   
 }
 
@@ -264,6 +266,7 @@ DividerMultiplier::DividerMultiplier(){   //initalize values
 void DividerMultiplier::SetInOutCycleLengths(int in, int out){
   InputCycleLength = in;
   OutputCycleLength = out;
+  Serial.println("called");
 }
 
 void DividerMultiplier::CalculateOutputTimesAtCycleStart() {
@@ -356,7 +359,8 @@ bool DividerMultiplier::ShouldWeOutputMainPulse(){
   if (millis() > PulseTimes[PositionInOutputCycle]){
     if (PositionInOutputCycle<OutputCycleLength){      //The cycle only loops back to the start when triggered by the input signal
       PositionInOutputCycle = PositionInOutputCycle + 1;  
-      return true;       Serial.println(PositionInOutputCycle);
+
+      return true;       //Serial.println(PositionInOutputCycle);
 
     } else
       return false; 
@@ -376,6 +380,9 @@ bool DividerMultiplier::ShouldWeOutputMainPulse(){
 
 //Adjust cycle paramaters without screwing up our place in the cycle
 void DividerMultiplier::UpdateKnobValues(int InCycleLengthKnobPlusCV, int OutCycleLengthKnobPlusCV, int ShuffleKnobPlusCV){
+  Serial.print(OutputCycleLength);
+  Serial.print("  ");
+  Serial.println(OutCycleLengthKnobPlusCV);
     if (InCycleLengthKnobPlusCV != InputCycleLength){
       InputCycleLength = InCycleLengthKnobPlusCV;
       PositionInInputCycle = PositionInInputCycle % InputCycleLength; }
@@ -438,7 +445,7 @@ void DividerMultiplier::UpdateFractionalShuffleTime(float AmountToChangeBy){
 
 class JitterSmoother { 
   int OldValue, NewValue;
-  unsigned long int SampleInterval = 60;
+  unsigned long int SampleInterval;
   int Threshold;
   
   public:
@@ -452,11 +459,13 @@ class JitterSmoother {
 JitterSmoother::JitterSmoother(){   //initalize values
  OldValue = 0;
  NewValue = 0;
- SampleInterval = 60;
+ SampleInterval = 20;
  Threshold = 50;
 }
 
 int JitterSmoother::SmoothChanges(int Input){
+  //Serial.print(Input);
+  //Serial.print(" ");
 if ((millis() - TimeOfLastRead) > SampleInterval){
   TimeOfLastRead = millis();
   if ( (Input - OldValue) > Threshold ){
@@ -551,7 +560,8 @@ int CVassigner::readCV(){
 //  Serial.print(ControlValue_CVin);
 //  Serial.println((int)ControlValue_Attenuverter*ControlValue_CVin/CVscalingFactor);
   
-  return (int)(ControlValue_Attenuverter*ControlValue_CVin/CVscalingFactor);
+  //return (int)(ControlValue_Attenuverter*ControlValue_CVin/CVscalingFactor);
+  return (int) 0;
 }
 
 
@@ -561,7 +571,7 @@ int CVassigner::ReturnShiftModifier(){
   
   if ( CVcontrolShift == false ) { return 0; } else {
     ShiftModifierOld = ShiftModifierNew; //rememebred from last function call
-    ShiftModifierNew = (int)(JitterSmootherCV.SmoothChanges(CVassigner::readCV())/200);
+    ShiftModifierNew = (int)(-JitterSmootherCV.SmoothChanges(CVassigner::readCV())/ShiftCVScalingFactor);
     return ShiftModifierNew-ShiftModifierOld;
   }
   
@@ -604,6 +614,10 @@ void setup() {
 
   EncKnob.write(0);
 
+  //JitterSmootherCV.SetSampleIntervalandThreshold(10,10);
+  //JitterSmootherL.SetSampleIntervalandThreshold(10,10);
+  //JitterSmootherD.SetSampleIntervalandThreshold(10,10);
+
 }
 
 
@@ -619,13 +633,15 @@ void loop() {
   }
     clockInPrevState = clockInState;
 
-
   //update knob control values
   //we repeat the reading twice, because if we take the first reading, it will still have some residual influence from the previous reading because the capacitor hasn't had time to charge/discharge. 
   ControlValue_Length = analogRead(CtrPin_Length);
   ControlValue_Length = analogRead(CtrPin_Length);
   ControlValue_Divisions = analogRead(CtrPin_Divisions);
   ControlValue_Divisions = analogRead(CtrPin_Divisions);
+
+  //check routing of CV signals, which needs to change if the CV destination switch has been used
+  CVassignerMaster.UpdateCVrouting();
 
   //add control voltage to knob value as appriate
   //Prevent the voltage from pushing the control value beyond the normal range of the knob. 
@@ -639,30 +655,35 @@ void loop() {
     if(ControlValue_Divisions < 0){ControlValue_Divisions = 0;}
     if(ControlValue_Divisions > 4096){ControlValue_Divisions = 4096;}
   }
+    
+  //Smooth out noise in the control values
+  //(For some reason, this doesn't work properly when I call it from inside the map functions below...)
+  ControlValue_Length_Smoothed = JitterSmootherL.SmoothChanges(ControlValue_Length);
+  //ControlValue_Divisions_Smoothed = JitterSmootherD.SmoothChanges(ControlValue_Divisions);
+  ControlValue_Divisions_Smoothed = ControlValue_Divisions;
+    //Serial.print(ControlValue_Divisions_Smoothed);
+    //Serial.print(" ");
+
 
   //scale control values to be within specified range
-  //engage the Jitter Smoother at this point, to filter out noise in the combined (knob + Control voltage) signal
-  ControlValue_Length_Scaled = map(JitterSmootherL.SmoothChanges(ControlValue_Length),0,4096,Length_min,Length_max);
-  ControlValue_Divisions_Scaled = map(JitterSmootherD.SmoothChanges(ControlValue_Divisions),0,4096,Divisions_min,Divisions_max);
+  ControlValue_Length_Scaled = map(ControlValue_Length_Smoothed,0,4096,Length_min,Length_max);
+  ControlValue_Divisions_Scaled = map(ControlValue_Divisions_Smoothed,0,4096,Divisions_min,Divisions_max);
 
-  //TO DO: put smoothing on these numbers?
-
+  Serial.print(ControlValue_Divisions_Scaled);
+  Serial.print(" ");
+    
   //send control values to the brain
   DividerMultiplierMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, 0);
 
   //check if the encoder has been turned since the last cycle
   EncoderValTemp = -EncKnob.read();
 
-  //check routing of CV signals
-  CVassignerMaster.UpdateCVrouting();
-
-  CVassignerMaster.ReturnShiftModifier();
-  
+  //Read any instructions from the encoder
   if (EncoderValTemp !=  0){
     if((EncoderValTemp % EncoderCountsPerClick) == 0){  //if this is not true, the knob has not reached an indent yet and must be mid-turn - do nothing     
       if(digitalRead(SwPin_Encoder)==0){
          //if the encoder switch was *not* pushed, we update a shift paramater
-         DividerMultiplierMain.ShiftPositionInInputCycle(EncoderValTemp/EncoderCountsPerClick);
+         EncoderShiftInstruction = EncoderValTemp/EncoderCountsPerClick;  //we store the value temporarily, and combine it with any CV signal before passing it to the appropiate function
       } else if(digitalRead(SwPin_Encoder)==1){
          //if the encoder switch *was* pushed, update a shuffle paramater 
          DividerMultiplierMain.UpdateFractionalShuffleTime((float)(-EncoderValTemp/EncoderCountsPerClick)/(float)EncoderShuffleNoOfClicks);
@@ -672,6 +693,10 @@ void loop() {
     }
   }
 
+
+  //Shift position in cycle according to CV and any encoder input
+  DividerMultiplierMain.ShiftPositionInInputCycle(EncoderShiftInstruction + CVassignerMaster.ReturnShiftModifier());
+  EncoderShiftInstruction = 0; //Resets the value for the next cycle
 
   // deal with starting output pulses
   if(DividerMultiplierMain.ShouldWeOutputThruPulse()==true){
