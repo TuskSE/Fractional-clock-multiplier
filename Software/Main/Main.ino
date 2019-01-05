@@ -310,6 +310,7 @@ void DividerMultiplier::CalculateOutputTimesMidCycle(){
         }
     }
   } 
+
 }
 
 
@@ -324,7 +325,7 @@ void DividerMultiplier::InputPulse() {
       PositionInInputCycle = 0;
       PositionInOutputCycle = 0;
       CycleOutPulseStart = true;
-;      if(fractionalShuffle == 0.0){MainOutPulseStart = true;}
+      if(fractionalShuffle == 0.0){MainOutPulseStart = true;}
       CycleStartTime = millis();
       CalculateOutputTimesAtCycleStart();
   }
@@ -356,8 +357,7 @@ bool DividerMultiplier::ShouldWeOutputMainPulse(){
   if (millis() > PulseTimes[PositionInOutputCycle]){
     if (PositionInOutputCycle<OutputCycleLength){      //The cycle only loops back to the start when triggered by the input signal
       PositionInOutputCycle = PositionInOutputCycle + 1;  
-      return true;       Serial.println(PositionInOutputCycle);
-
+      return true;       
     } else
       return false; 
   } else {
@@ -440,12 +440,12 @@ class JitterSmoother {
   int OldValue, NewValue;
   unsigned long int SampleInterval;
   int Threshold;
+  unsigned long int TimeOfLastRead;
   
   public:
   JitterSmoother ();
   void SetSampleIntervalandThreshold(unsigned long int,int);
   int SmoothChanges(int);
-  static unsigned long int TimeOfLastRead;
 } JitterSmootherL, JitterSmootherD, JitterSmootherCV;
 
 
@@ -454,20 +454,31 @@ JitterSmoother::JitterSmoother(){   //initalize values
  NewValue = 1;
  SampleInterval = 60;
  Threshold = 50;
+ TimeOfLastRead = 1;
 }
 
 int JitterSmoother::SmoothChanges(int Input){
   if ( (millis() - TimeOfLastRead) > SampleInterval){
-    TimeOfLastRead = millis();
-    Serial.println(Input);
-    if ( (Input - OldValue) > Threshold ){
-    NewValue = Input;
+
+    //needed the first time we call the function 
+    if (TimeOfLastRead == 1){
+      NewValue = Input;
+      TimeOfLastRead = millis();
+      OldValue = Input;
+      return NewValue;  
+    }
+
+    //On all the following occasions...
+    TimeOfLastRead = millis();  //update for future reference
+     
+    if ( (Input - OldValue) > Threshold ){  
+    NewValue = Input; 
   } else if ( (Input - OldValue) < (-Threshold) ){
     NewValue = Input;
   }  else{
     NewValue = OldValue;
-    }
-    
+  }
+
   OldValue = NewValue;
   }
 return NewValue;  
@@ -478,7 +489,6 @@ void JitterSmoother::SetSampleIntervalandThreshold(unsigned long int NewSampleIn
   Threshold = NewThreshold;
 }
 
-unsigned long int JitterSmoother::TimeOfLastRead = 0;  
 
 //----------------------------------------------------------------------------------------------------------------------
 
@@ -610,6 +620,8 @@ void setup() {
 
   EncKnob.write(0);
 
+
+
   JitterSmootherCV.SetSampleIntervalandThreshold(30,50); //tunes the smoothing algorith for the control voltage
 }
 
@@ -630,10 +642,14 @@ void loop() {
   //update knob control values
   //we repeat the reading twice, because if we take the first reading, it will still have some residual influence from the previous reading because the capacitor hasn't had time to charge/discharge. 
   ControlValue_Length = analogRead(CtrPin_Length);
-  ControlValue_Length = analogRead(CtrPin_Length);
+  ControlValue_Length = JitterSmootherD.SmoothChanges(analogRead(CtrPin_Length));
   ControlValue_Divisions = analogRead(CtrPin_Divisions);
-  ControlValue_Divisions = analogRead(CtrPin_Divisions);
+  Serial.print(ControlValue_Divisions);
+  Serial.print("  ");
+  ControlValue_Divisions = JitterSmootherL.SmoothChanges(analogRead(CtrPin_Divisions));
   //Need to re-introduce jitter smoothing at some point
+  Serial.println(ControlValue_Divisions);
+
 
   //add control voltage to knob value as appriate
   //Prevent the voltage from pushing the control value beyond the normal range of the knob. 
@@ -644,13 +660,7 @@ void loop() {
   }
   
   if(CVcontrolDivisions == true){
-    //Serial.print(ControlValue_Divisions);
-    //Serial.print(" ");
-    
     ControlValue_Divisions = ControlValue_Divisions + CVassignerMaster.readCV();
-    
-    //Serial.println(ControlValue_Divisions);
-
     if(ControlValue_Divisions < 0){ControlValue_Divisions = 0;}
     if(ControlValue_Divisions > 4096){ControlValue_Divisions = 4096;}
   }
