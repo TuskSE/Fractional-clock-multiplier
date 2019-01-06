@@ -453,7 +453,7 @@ class JitterSmoother {
   JitterSmoother ();
   void SetSampleIntervalandThreshold(unsigned long int,int);
   int SmoothChanges(int);
-} JitterSmootherL, JitterSmootherD, JitterSmootherCV, JitterSmootherAttenuverter;
+} JitterSmootherL, JitterSmootherD, JitterSmootherCV;
 
 
 JitterSmoother::JitterSmoother(){   //initalize values
@@ -566,7 +566,7 @@ void CVassigner::UpdateCVrouting(){
 //read CV will return an value between +- ~4000, scaled by the attenuverter (CV amt) knob. 
 int CVassigner::readCV(){
   ControlValue_Attenuverter = map(analogRead(CtrPin_CVamt),0,4096,+100,-100);
-  ControlValue_Attenuverter = map(JitterSmootherAttenuverter.SmoothChanges(analogRead(CtrPin_CVamt)),0,4096,+100,-100);  //read twice to give time for the ADC capacitor to equilibrate, avoiding crosstalk from other analog reads 
+  ControlValue_Attenuverter = map(analogRead(CtrPin_CVamt),0,4096,+100,-100);  //read twice to give time for the ADC capacitor to equilibrate, avoiding crosstalk from other analog reads 
   //aside: do we need a voltage smoother on the above?
   ControlValue_CVin = analogRead(InPin_CV)-CVzeroReading;
   ControlValue_CVin = JitterSmootherCV.SmoothChanges(analogRead(InPin_CV))-CVzeroReading; //read twice to give time for the ADC capacitor to equilibrate, avoiding crosstalk from other analog reads 
@@ -580,7 +580,7 @@ int CVassigner::ReturnShiftModifier(){
   //the main fuction controlling shift takes an integer input, which is the amount to shift by: void DividerMultiplier::ShiftPositionInInputCycle(int AmoutToShiftBy)
   //we need to keep track of an overall shift related to CV, and send a signal to that fuction only when control voltage changes cause that shift to change
   
-  if ( CVcontrolShift == false ) {
+  if ( CVcontrolShift == false ) { 
     if (ShiftModifierNew != 0){  //if CV control over shift just got disabled, we want to make sure we reverse any changes which CV control exerted previously
       ShiftModifierOld = ShiftModifierNew;
       ShiftModifierNew = 0;
@@ -594,8 +594,6 @@ int CVassigner::ReturnShiftModifier(){
     ShiftModifierNew = (int)(CVassigner::readCV()/ShiftCVScalingFactor);
     ShiftModifierChange = ShiftModifierNew-ShiftModifierOld;
     return -(ShiftModifierChange);
-
-    
 }
 
 
@@ -670,6 +668,7 @@ void setup() {
 void loop() {
   // deal with input
   clockInState = digitalRead(InPin_Trig);
+  
   if(clockInState == 0 && clockInPrevState == 1){      //............if the Trigger In voltage switches from low to high
     InputPulsePredictor.InputPulse();
     DividerMultiplierMain.InputPulse();
