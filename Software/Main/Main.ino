@@ -440,6 +440,76 @@ void DividerMultiplier::UpdateFractionalShuffleTime(float AmountToChangeBy){
 
 
 //------------------------------------------------------------------------------------------------------------------------
+// EuclieanCalculator will handle euclidean rhythm generation.
+//i.e. it will calculate on which beats of the input cycle should an output be triggered
+//It will work by spreading m input pulses evenly along a circle, and generating a polygon of k vertices (k = number of hits) inside it. These values will "snap" to the next input pulse.
+
+class EuclideanCalculator {
+  int InputCycleQuantization, NumberOfHits, mTemp;
+  bool HitLocationsInCycle [16];
+  float QuantizationPointSpacing, PolygonPointSpacing, QuantizationPointsOnCircle[16], PolygonVertexes[16];
+
+  public:
+  EuclideanCalculator ();
+  void RecalculateRhythm();
+
+  
+} EuclideanCalculatorMain;
+
+EuclideanCalculator::EuclideanCalculator(){   //initalize values
+  InputCycleQuantization = 12;
+  NumberOfHits = 5;
+}
+
+void EuclideanCalculator::RecalculateRhythm(){
+  //Spread quantization points along a circle of circumfernece 1; first quantization at 0
+  
+  QuantizationPointSpacing = (1.00)/(float)InputCycleQuantization;
+  QuantizationPointsOnCircle[0]=0.0;
+  for(int i=1; i<InputCycleQuantization; i++){
+    QuantizationPointsOnCircle[i] = QuantizationPointsOnCircle[i-1] + QuantizationPointSpacing;
+  }
+  QuantizationPointsOnCircle[InputCycleQuantization] = 1;
+  for(int i = InputCycleQuantization+1; i<16; i++){    
+    QuantizationPointsOnCircle[i] = 0;     //set unused values to 0
+  }
+
+  //Draw polygon corresponding to ideal (unquantized) hit locations
+  PolygonPointSpacing = (1.00)/(float)NumberOfHits;
+  PolygonVertexes[0] = 0.0;
+  for(int i=1; i<NumberOfHits; i++){
+    PolygonVertexes[i] = PolygonVertexes[i-1] + PolygonPointSpacing;
+  }
+  for(int i=NumberOfHits; i<16; i++){
+    PolygonVertexes[i] = 0;
+  }
+
+  //reset HitLocationsInCycle
+  for(int i=0; i<16; i++){
+    HitLocationsInCycle[i] = false;
+  }
+
+  //For each polygon point, find the nearest quantization point clockwise around the circle, and mark as a hit location
+  for(int k=0; k<NumberOfHits; k++){
+    mTemp =0;
+    for (mTemp=0; mTemp<=InputCycleQuantization; mTemp++){
+      if (QuantizationPointsOnCircle[mTemp] >= PolygonVertexes[k]){break;};
+    }
+    HitLocationsInCycle[mTemp] = true;
+  }
+
+  //testing:
+  for(int m=0; m<InputCycleQuantization; m++){
+    Serial.print(HitLocationsInCycle[m]);
+    Serial.print(" ");
+  }
+  Serial.println(" "); 
+  
+}
+
+
+
+//------------------------------------------------------------------------------------------------------------------------
 //JitterSmoother is designed to filter out jitter in potentiometer voltages (and CV) which don't correspond to changes in input voltage. 
 //This very simple implementation doesn't work especially well, and risks ignoring slow CV changes (eg from a slow LFO). 
 
@@ -659,8 +729,6 @@ void setup() {
 
   EncKnob.write(0);
 
-
-
   JitterSmootherCV.SetSampleIntervalandThreshold(60,200); //tunes the smoothing algorith for the control voltage
 }
 
@@ -668,6 +736,11 @@ void setup() {
 //----------------------------------------------------------------------------------------------------------------------
 
 void loop() {
+  //test
+  EuclideanCalculatorMain.RecalculateRhythm();
+  
+  
+  
   // deal with input
   clockInState = digitalRead(InPin_Trig);
   if(clockInState == 0 && clockInPrevState == 1){      //............if the Trigger In voltage switches from low to high
