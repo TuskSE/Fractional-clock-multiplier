@@ -57,6 +57,8 @@ int EncoderShuffleNoOfClicks = 20; //The number of clicks of encoder rotation wh
 
 bool CVcontrolCycleLength, CVcontrolDivisions, CVcontrolShuffle, CVcontrolShift;
 
+bool EuclideanMode_temp = false; //if 0, runs as clock divider. If 1, runs as euclidean pattern generator. 
+
 int Temp;
 //-------------------------------------------------------------------------------------------------------------------
 
@@ -428,6 +430,9 @@ void DividerMultiplier::UpdateFractionalShuffleTime(float AmountToChangeBy){
       while (fractionalShuffle >= 1){
         fractionalShuffle  = fractionalShuffle - 1.0;
       }
+
+        Serial.println(fractionalShuffle);
+
   
     //Set brightness of the shuffle indicator LED to reflect the amount of shuffle
     analogWrite(LEDPin_Shuffle, fractionalShuffle*40);
@@ -445,14 +450,14 @@ void DividerMultiplier::UpdateFractionalShuffleTime(float AmountToChangeBy){
 //It will work by spreading m input pulses evenly along a circle, and generating a polygon of k vertices (k = number of hits) inside it. These values will "snap" to the next input pulse.
 
 class EuclideanCalculator {
-  int InputCycleQuantization, NumberOfHits, mTemp;
+  int InputCycleQuantization, NumberOfHits, mTemp, PositionInInputCycle;
   bool HitLocationsInCycle [16];
-  float QuantizationPointSpacing, PolygonPointSpacing, QuantizationPointsOnCircle[16], PolygonVertexes[16];
+  float QuantizationPointSpacing, PolygonPointSpacing, QuantizationPointsOnCircle[16], PolygonVertexes[16], fractionalShiftOfPolygon;
 
   public:
   EuclideanCalculator ();
   void RecalculateRhythm();
-
+  void UpdateKnobValues(int, int, int);
   
 } EuclideanCalculatorMain;
 
@@ -460,6 +465,24 @@ EuclideanCalculator::EuclideanCalculator(){   //initalize values
   InputCycleQuantization = 12;
   NumberOfHits = 5;
 }
+
+void EuclideanCalculator::UpdateKnobValues(int InCycleQyantizationKnobPlusCV, int NumberOfHitsKnobPlusCV, int ShuffleKnobPlusCV){
+
+      if( (InCycleQyantizationKnobPlusCV != InputCycleQuantization) || (NumberOfHitsKnobPlusCV != NumberOfHits) || (ShuffleKnobPlusCV != fractionalShiftOfPolygon) ){
+
+        InputCycleQuantization = InCycleQyantizationKnobPlusCV;
+        NumberOfHits = NumberOfHitsKnobPlusCV;
+        fractionalShiftOfPolygon = ShuffleKnobPlusCV;
+        EuclideanCalculator::RecalculateRhythm();
+
+        if (InCycleQyantizationKnobPlusCV != InputCycleQuantization){
+        PositionInInputCycle = PositionInInputCycle % InputCycleQuantization;  //ensures that we don't screw up position in the input cycle when we change input cycle length
+        }
+
+      }
+
+}
+
 
 void EuclideanCalculator::RecalculateRhythm(){
   //Spread quantization points along a circle of circumfernece 1; first quantization at 0
@@ -737,15 +760,18 @@ void setup() {
 
 void loop() {
   //test
-  EuclideanCalculatorMain.RecalculateRhythm();
-  
-  
   
   // deal with input
   clockInState = digitalRead(InPin_Trig);
   if(clockInState == 0 && clockInPrevState == 1){      //............if the Trigger In voltage switches from low to high
     InputPulsePredictor.InputPulse();
-    DividerMultiplierMain.InputPulse();
+    
+    if( EuclideanMode_temp ){
+      //do nothing
+    }else{
+      DividerMultiplierMain.InputPulse();
+    }
+    
   }
     clockInPrevState = clockInState;
 
@@ -758,7 +784,6 @@ void loop() {
   ControlValue_Divisions = JitterSmootherD.SmoothChanges(analogRead(CtrPin_Divisions));
   //Need to re-introduce jitter smoothing at some point
 
-  
 
   //add control voltage to knob value as appriate
   //Prevent the voltage from pushing the control value beyond the normal range of the knob. 
@@ -786,7 +811,13 @@ void loop() {
 
 
   //send control values to the brain
-  DividerMultiplierMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, 0);
+  if ( EuclideanMode_temp ){
+      EuclideanCalculatorMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, 0);
+    }  else  {
+      DividerMultiplierMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, 0);
+  } 
+  
+  
 
   //check if the encoder has been turned since the last cycle
   EncoderValTemp = -EncKnob.read();
@@ -806,27 +837,45 @@ void loop() {
   }
 
   //Apply Shift/Shuffle to pattern, according to encoder changes AND control voltage changes as appropriate 
-  DividerMultiplierMain.ShiftPositionInInputCycle(EncoderShiftInstruction + CVassignerMaster.ReturnShiftModifier());
+  if ( EuclideanMode_temp ) {
+    // TO DO : pass on changes to shift/shuffle
+  } else {
+     DividerMultiplierMain.ShiftPositionInInputCycle(EncoderShiftInstruction + CVassignerMaster.ReturnShiftModifier());
+     DividerMultiplierMain.UpdateFractionalShuffleTime(EncoderShuffleInstruction + CVassignerMaster.ReturnFractionalShuffleModifier());
+  }
+
   EncoderShiftInstruction = 0; 
-  DividerMultiplierMain.UpdateFractionalShuffleTime(EncoderShuffleInstruction + CVassignerMaster.ReturnFractionalShuffleModifier());
   EncoderShuffleInstruction = 0.0;
+  
   
   //check routing of CV signals
   CVassignerMaster.UpdateCVrouting();
 
+
   // deal with starting output pulses
-  if(DividerMultiplierMain.ShouldWeOutputThruPulse()==true){
-    TrigOutManager_Thru.StartPulse();
+  if ( EuclideanMode_temp )
+  {
+    // ask euclidean generator whether we should output a pulse
+    // TO DO
+  } else  {
+    
+      if(DividerMultiplierMain.ShouldWeOutputThruPulse()==true){
+        TrigOutManager_Thru.StartPulse();
+      }
+    
+      if(DividerMultiplierMain.ShouldWeOutputCyclePulse()==true){
+        TrigOutManager_Cycle.StartPulse();
+      }
+    
+      if(DividerMultiplierMain.ShouldWeOutputMainPulse()==true){
+        TrigOutManager_Main.StartPulse();
+        TrigOutManager_Thru.StartPulse();
+      }
   }
+    
 
-  if(DividerMultiplierMain.ShouldWeOutputCyclePulse()==true){
-    TrigOutManager_Cycle.StartPulse();
-  }
 
-    if(DividerMultiplierMain.ShouldWeOutputMainPulse()==true){
-    TrigOutManager_Main.StartPulse();
-    TrigOutManager_Thru.StartPulse();
-  }
+  
  
 
   //deal with actually setting voltage on the outputs
