@@ -293,28 +293,54 @@ void DividerMultiplier::CalculateOutputTimesAtCycleStart() {
 }
 
 void DividerMultiplier::CalculateOutputTimesMidCycle(){
-  //both the input cycle time and output cycle time may have changed
-//    Serial.print("Mid Cycle Recalc Called. Position in in cycle = ");
-//    Serial.print(PositionInInputCycle);
-//    Serial.print(" ");
+  //both the input cycle time and output cycle time may have changed, as well as the fractional shuffle
+
   //first, we need to extrapolate back to when the start of the current input cycle would have been, then calculate the cycle time from that point
   CycleStartTime = InputPulsePredictor.TimeOflastPulsePlusN(PositionInInputCycle);
   ExpectedCycleEndTime = InputPulsePredictor.TimeOfNthPulse(InputCycleLength-PositionInInputCycle);
 
   if(CycleStartTime !=0 && ExpectedCycleEndTime !=0){
+  Serial.print("Engaged. Output cycle length =  ");
+  Serial.print(OutputCycleLength);
   ExpectedCycleLength = ExpectedCycleEndTime - CycleStartTime;
 
   //calculate the output times, adjusting for shuffle
     ExpectedIntervalTime = ExpectedCycleLength/OutputCycleLength;
-    PulseTimes[0] = CycleStartTime + (fractionalShuffle*ExpectedIntervalTime);
-    PulseTimes[OutputCycleLength-1] = CycleStartTime + ExpectedCycleLength + (fractionalShuffle*ExpectedIntervalTime);
-    for (int i=(OutputCycleLength-1); i > 0; i--){   //calculate from the end of the cycle backwards until we get to the pulse due next
-        PulseTimes[i-1] = PulseTimes[i]-ExpectedIntervalTime;
-        if (PulseTimes[i-1]<millis()) { //PulseTimes[i] must be the next pulse due
-          PositionInOutputCycle = i;
-          break;
-        }
+    PulseTimes[0] = CycleStartTime + (fractionalShuffle*ExpectedIntervalTime);  //NB: PulseTimes[0] always falls after the Cycle Start time
+    
+    PulseTimes[OutputCycleLength-1] = CycleStartTime + ExpectedCycleLength + (fractionalShuffle*ExpectedIntervalTime); //calculate time of the final pulse
+    
+//    for (int i=(OutputCycleLength-1); i >= 0; i--){   //calculate from the end of the cycle backwards until we get to the pulse due next
+//        PulseTimes[i-1] = PulseTimes[i]-ExpectedIntervalTime;
+//        if (PulseTimes[i-1]<millis()) { //PulseTimes[i] must be the next pulse due
+//          PositionInOutputCycle = i;
+//          break;
+//          } 
+//     } 
+
+     //^ I think the above loop is flawed, because it doesn't recognise when the first pulse in the cycle (i=0) IS the next pulse, once shuffle has been accounted for
+     //instead, it's better to calculate UP
+
+    for (int i=0; i<OutputCycleLength; i++){
+          Serial.print(" Loop iteration i =   ");
+          Serial.println(i);
+
+          if (PulseTimes[i]>millis()) { //PulseTimes[i] must be the next pulse due
+            PositionInOutputCycle = i;
+            
+            Serial.print(PositionInOutputCycle);
+            Serial.print(" Current time : time of next pulse = ");
+            Serial.print(millis());
+            Serial.print(" ");
+            Serial.println(PulseTimes[PositionInOutputCycle]) ;
+
+            break;
+          } else {
+             //otherwise calculate, the time of the next pulse
+             PulseTimes[i+1] = PulseTimes[i] + ExpectedIntervalTime;
+          }
     }
+    // something's still wrong here - we are still loosing beats when we alter the CV
   }
 
 }
@@ -361,8 +387,14 @@ bool DividerMultiplier::ShouldWeOutputCyclePulse(){
 
 bool DividerMultiplier::ShouldWeOutputMainPulse(){
   if (millis() > PulseTimes[PositionInOutputCycle]){
+    //Serial.println(PositionInOutputCycle);
+    //Serial.println("TRIGGER PULSE A");
+    //Serial.print(PositionInOutputCycle);
+    //Serial.print(" ");
+    //Serial.println(OutputCycleLength);
     if (PositionInOutputCycle<OutputCycleLength){      //The cycle only loops back to the start when triggered by the input signal
       PositionInOutputCycle = PositionInOutputCycle + 1;  
+      Serial.println("Trigger pulse B");
       return true;       
     } else
       return false; 
@@ -430,17 +462,13 @@ void DividerMultiplier::UpdateFractionalShuffleTime(float AmountToChangeBy){
       while (fractionalShuffle >= 1){
         fractionalShuffle  = fractionalShuffle - 1.0;
       }
-
-        Serial.println(fractionalShuffle);
-
-  
+ 
     //Set brightness of the shuffle indicator LED to reflect the amount of shuffle
     analogWrite(LEDPin_Shuffle, fractionalShuffle*40);
     
     //update output times accordingly
     DividerMultiplier::CalculateOutputTimesMidCycle();
   }
-  
 }
 
 
@@ -708,9 +736,11 @@ float CVassigner::ReturnFractionalShuffleModifier(){
     ShuffleModifierChange = ShuffleModifierNew - ShuffleModifierOld;
     
         if (ShuffleModifierChange != 0){
-         Serial.print(ShuffleModifierNew);
-         Serial.print(" ");
-         Serial.println(ShuffleModifierChange);
+         //Serial.print(ShuffleModifierNew);
+         //Serial.print(" ");
+         //Serial.print(millis());
+         //Serial.print(" ");
+         //Serial.println(ShuffleModifierChange);
         }
     
     return -(ShuffleModifierChange);
