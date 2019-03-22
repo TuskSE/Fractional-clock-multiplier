@@ -230,7 +230,7 @@ bool TrigOutManager::ShouldWeBeOutputting(){
 // To space out pulses correctly, it must recieve information about how long the cycle is expected to last. 
 
 class DividerMultiplier {
-  int InputCycleLength,OutputCycleLength,PositionInInputCycle,PositionInOutputCycle,NewPositionTemp;
+  int InputCycleLength,OutputCycleLength,PositionInInputCycle,PositionInOutputCycle,NewPositionTemp, Debug_PositionInOutputCycleOld;
   unsigned long int ExpectedCycleLength, CycleStartTime, ExpectedCycleEndTime, ExpectedIntervalTime, PulseTimes[16], ShuffleTime;
   bool CycleOutPulseStart, MainOutPulseStart, ThruPulseStart, TransmitPulses;
   float fractionalShuffle; //The fraction of an output beat by which the output should be delayed. Expected value between 0 and 1.  
@@ -245,9 +245,10 @@ class DividerMultiplier {
   void SetInOutCycleLengths(int, int);
   void CalculateOutputTimesAtCycleStart();
   void CalculateOutputTimesMidCycle();
-  void UpdateKnobValues(int, int, int);
+  void UpdateKnobValues(int, int);
   void ShiftPositionInInputCycle(int);
   void UpdateFractionalShuffleTime(float);
+  void PrintPositionInOutputCycle();
 } DividerMultiplierMain;
 
 
@@ -263,6 +264,7 @@ DividerMultiplier::DividerMultiplier(){   //initalize values
   CycleStartTime = 0;
   NewPositionTemp = 0;
   fractionalShuffle = 0.0;
+  Debug_PositionInOutputCycleOld = 16;
 }
 
 void DividerMultiplier::SetInOutCycleLengths(int in, int out){
@@ -300,47 +302,25 @@ void DividerMultiplier::CalculateOutputTimesMidCycle(){
   ExpectedCycleEndTime = InputPulsePredictor.TimeOfNthPulse(InputCycleLength-PositionInInputCycle);
 
   if(CycleStartTime !=0 && ExpectedCycleEndTime !=0){
-  Serial.print("Engaged. Output cycle length =  ");
-  Serial.print(OutputCycleLength);
+  //Serial.print("Engaged. Output cycle length =  ");
+  //Serial.print(OutputCycleLength);
   ExpectedCycleLength = ExpectedCycleEndTime - CycleStartTime;
 
   //calculate the output times, adjusting for shuffle
     ExpectedIntervalTime = ExpectedCycleLength/OutputCycleLength;
-    PulseTimes[0] = CycleStartTime + (fractionalShuffle*ExpectedIntervalTime);  //NB: PulseTimes[0] always falls after the Cycle Start time
-    
-    PulseTimes[OutputCycleLength-1] = CycleStartTime + ExpectedCycleLength + (fractionalShuffle*ExpectedIntervalTime); //calculate time of the final pulse
-    
-//    for (int i=(OutputCycleLength-1); i >= 0; i--){   //calculate from the end of the cycle backwards until we get to the pulse due next
-//        PulseTimes[i-1] = PulseTimes[i]-ExpectedIntervalTime;
-//        if (PulseTimes[i-1]<millis()) { //PulseTimes[i] must be the next pulse due
-//          PositionInOutputCycle = i;
-//          break;
-//          } 
-//     } 
-
-     //^ I think the above loop is flawed, because it doesn't recognise when the first pulse in the cycle (i=0) IS the next pulse, once shuffle has been accounted for
-     //instead, it's better to calculate UP
-
-    for (int i=0; i<OutputCycleLength; i++){
-          Serial.print(" Loop iteration i =   ");
-          Serial.println(i);
-
-          if (PulseTimes[i]>millis()) { //PulseTimes[i] must be the next pulse due
-            PositionInOutputCycle = i;
-            
-            Serial.print(PositionInOutputCycle);
-            Serial.print(" Current time : time of next pulse = ");
-            Serial.print(millis());
-            Serial.print(" ");
-            Serial.println(PulseTimes[PositionInOutputCycle]) ;
-
-            break;
-          } else {
-             //otherwise calculate, the time of the next pulse
-             PulseTimes[i+1] = PulseTimes[i] + ExpectedIntervalTime;
-          }
+    PulseTimes[0] = CycleStartTime + (fractionalShuffle*ExpectedIntervalTime);  //NB: PulseTimes[0] always falls after the Cycle Start time    
+    for (int i=1; i<OutputCycleLength; i++){
+      PulseTimes[i] = PulseTimes[i-1] + ExpectedIntervalTime;
     }
-    // something's still wrong here - we are still loosing beats when we alter the CV
+
+    //Now work out which pulse is due next
+    for (int i=0; i<OutputCycleLength; i++){
+      if(PulseTimes[i]>millis()){
+        PositionInOutputCycle = i;
+        break;
+      }
+    }
+
   }
 
 }
@@ -386,21 +366,16 @@ bool DividerMultiplier::ShouldWeOutputCyclePulse(){
 
 
 bool DividerMultiplier::ShouldWeOutputMainPulse(){
-  if (millis() > PulseTimes[PositionInOutputCycle]){
-    //Serial.println(PositionInOutputCycle);
-    //Serial.println("TRIGGER PULSE A");
-    //Serial.print(PositionInOutputCycle);
-    //Serial.print(" ");
-    //Serial.println(OutputCycleLength);
-    if (PositionInOutputCycle<OutputCycleLength){      //The cycle only loops back to the start when triggered by the input signal
+  if (PositionInOutputCycle<OutputCycleLength){ //if this is not true, we already output the last pulse of the cycle and must wait until the recycle is reset
+    if (millis() > PulseTimes[PositionInOutputCycle]){ //Check the current time against the time we know the upcoming pulse should start
+      //Serial.print("ShouldWeOutputMainPulse ");
+      //Serial.print(PositionInOutputCycle);
       PositionInOutputCycle = PositionInOutputCycle + 1;  
-      Serial.println("Trigger pulse B");
-      return true;       
-    } else
-      return false; 
-  } else {
-      return false;
-  }
+      //Serial.print(" -> ");
+      //Serial.println(PositionInOutputCycle);
+      return true;
+    } else {  return false; } 
+    } else {return false; }
 }
 
   bool DividerMultiplier::ShouldWeOutputThruPulse(){    //Note: pulses from "main" will ALSO be passed to the thru output in divider mode. That's not handled by this function.
@@ -413,7 +388,7 @@ bool DividerMultiplier::ShouldWeOutputMainPulse(){
 }
 
 //Adjust cycle paramaters without screwing up our place in the cycle
-void DividerMultiplier::UpdateKnobValues(int InCycleLengthKnobPlusCV, int OutCycleLengthKnobPlusCV, int ShuffleKnobPlusCV){
+void DividerMultiplier::UpdateKnobValues(int InCycleLengthKnobPlusCV, int OutCycleLengthKnobPlusCV){
     if (InCycleLengthKnobPlusCV != InputCycleLength){
       InputCycleLength = InCycleLengthKnobPlusCV;
       DividerMultiplier::CalculateOutputTimesMidCycle();
@@ -468,7 +443,20 @@ void DividerMultiplier::UpdateFractionalShuffleTime(float AmountToChangeBy){
     
     //update output times accordingly
     DividerMultiplier::CalculateOutputTimesMidCycle();
+
+    //Serial.println(fractionalShuffle);
   }
+}
+
+void DividerMultiplier::PrintPositionInOutputCycle(){
+  if(Debug_PositionInOutputCycleOld != PositionInOutputCycle){
+      Serial.println(PositionInOutputCycle);
+
+      if(PulseTimes[PositionInOutputCycle]>millis()){
+        Serial.println("something is wrong!");
+      }
+  }
+  Debug_PositionInOutputCycleOld = PositionInOutputCycle;
 }
 
 
@@ -550,11 +538,11 @@ void EuclideanCalculator::RecalculateRhythm(){
   }
 
   //testing:
-  for(int m=0; m<InputCycleQuantization; m++){
-    Serial.print(HitLocationsInCycle[m]);
-    Serial.print(" ");
-  }
-  Serial.println(" "); 
+  //for(int m=0; m<InputCycleQuantization; m++){
+    //Serial.print(HitLocationsInCycle[m]);
+    //Serial.print(" ");
+  //}
+  //Serial.println(" "); 
   
 }
 
@@ -794,10 +782,13 @@ void loop() {
   // deal with input
   clockInState = digitalRead(InPin_Trig);
   if(clockInState == 0 && clockInPrevState == 1){      //............if the Trigger In voltage switches from low to high
-    InputPulsePredictor.InputPulse();
     
+    //pass to the pulse predictor
+    InputPulsePredictor.InputPulse();
+
+    //pass to whatever's controlling the current output mode
     if( EuclideanMode_temp ){
-      //do nothing
+      //To do.
     }else{
       DividerMultiplierMain.InputPulse();
     }
@@ -812,7 +803,7 @@ void loop() {
   ControlValue_Length = JitterSmootherL.SmoothChanges(analogRead(CtrPin_Length));
   ControlValue_Divisions = analogRead(CtrPin_Divisions);
   ControlValue_Divisions = JitterSmootherD.SmoothChanges(analogRead(CtrPin_Divisions));
-  //Need to re-introduce jitter smoothing at some point
+  //Might need to re-introduce jitter smoothing at some point
 
 
   //add control voltage to knob value as appriate
@@ -830,11 +821,10 @@ void loop() {
   }
 
 
-
   //scale control values to be within specified range
   ControlValue_Length_Scaled = map(ControlValue_Length,0,4096,Length_min,Length_max);
   ControlValue_Divisions_Scaled = map(ControlValue_Divisions,0,4096,Divisions_min,Divisions_max);
-//
+
 //  Serial.print(ControlValue_Length_Scaled);
 //  Serial.print(" ");
 //  Serial.println(ControlValue_Divisions_Scaled);
@@ -844,10 +834,8 @@ void loop() {
   if ( EuclideanMode_temp ){
       EuclideanCalculatorMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, 0);
     }  else  {
-      DividerMultiplierMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, 0);
+      DividerMultiplierMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled);
   } 
-  
-  
 
   //check if the encoder has been turned since the last cycle
   EncoderValTemp = -EncKnob.read();
@@ -903,7 +891,9 @@ void loop() {
       }
   }
     
-
+  
+  //debug
+  DividerMultiplierMain.PrintPositionInOutputCycle();
 
   
  
@@ -926,6 +916,7 @@ void loop() {
   } else {
     digitalWrite(OutPin_Cycle,LOW);
   }
+
 
   
 }
