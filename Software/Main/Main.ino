@@ -186,6 +186,7 @@ unsigned long int PulsePredictor::TimeOflastPulsePlusN (int n){
 class TrigOutManager {
   unsigned long TrigLengthMicros, CurrentPulseEndtimeMicros; //Length of trigger pulse in microseconds
   bool OutputPulseOccuring; //if True, we are in the middle of outputting a pulse
+  bool RolloverFlag; //if True, we are in the middle of a pulse which will straddle the point when micros() rolls over
 
   public:
   TrigOutManager (); //initializes trigger length. Currently this is hardwired into the function.
@@ -204,23 +205,36 @@ void TrigOutManager::StartPulse(){
   OutputPulseOccuring = true;
   CurrentPulseEndtimeMicros = micros() + TrigLengthMicros;
 
-  //If the micros() timer is close to rollover, just skip the pulse. Quick and dirty!
-  if(CurrentPulseEndtimeMicros > 429496700 ){
-    OutputPulseOccuring = false;
-  }
+  //If the micros() timer is close to rollover, then the value of CurrentPulseEndtimeMicros will have rolled over, as both are unsigned long.
+  //Work out if such a rollover has occured:
+  if (CurrentPulseEndtimeMicros < TrigLengthMicros){  
+    RolloverFlag = true;  } else {  
+      RolloverFlag = false; }
 }
 
 bool TrigOutManager::ShouldWeBeOutputting(){
+
   if(OutputPulseOccuring){
-    if (micros()>CurrentPulseEndtimeMicros){
-      OutputPulseOccuring = false;
-      return false;
-    } else {
-      return true;
+    
+    if(RolloverFlag == false){
+      if (micros()>CurrentPulseEndtimeMicros){
+        OutputPulseOccuring = false;
+        return false;
+      } else {
+        return true;
+      }
+    }else{ // RolleverFlag == true
+      if ( (micros()>CurrentPulseEndtimeMicros) && (micros() < 100*TrigLengthMicros) ){
+        OutputPulseOccuring = false;
+        return false;
+      } else {
+        return true;
+      }
     }
   } else {
     return false;
   }
+  
 }
 
 
@@ -714,7 +728,7 @@ float CVassigner::ReturnFractionalShuffleModifier(){
       //if CV control over shuffle just got disabled, we want to make sure we reverse any changes which CV control exerted previously
       ShuffleModifierOld = ShuffleModifierNew;
       ShuffleModifierNew = 0;
-      return -(ShuffleModifierNew-ShuffleModifierOld);
+      return (ShuffleModifierNew-ShuffleModifierOld);
     } else{
       return 0.0; 
     }
@@ -723,15 +737,15 @@ float CVassigner::ReturnFractionalShuffleModifier(){
     ShuffleModifierNew = (float)(CVassigner::readCV()/ShuffleCVScalingFactor)/(float)EncoderShuffleNoOfClicks; //This gives the output the same quantization as the encoder
     ShuffleModifierChange = ShuffleModifierNew - ShuffleModifierOld;
     
-        if (ShuffleModifierChange != 0){
+        //if (ShuffleModifierChange != 0){
          //Serial.print(ShuffleModifierNew);
          //Serial.print(" ");
          //Serial.print(millis());
          //Serial.print(" ");
          //Serial.println(ShuffleModifierChange);
-        }
+        //}
     
-    return -(ShuffleModifierChange);
+    return ShuffleModifierChange;
   }
   
 }
@@ -893,7 +907,7 @@ void loop() {
     
   
   //debug
-  DividerMultiplierMain.PrintPositionInOutputCycle();
+  //DividerMultiplierMain.PrintPositionInOutputCycle();
 
   
  
