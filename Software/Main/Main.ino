@@ -515,7 +515,7 @@ void DividerMultiplier::SetPositionInCycle(int NewPosition){
 
 class EuclideanCalculator {
   int InputCycleQuantization, NumberOfHits, mTemp, PositionInInputCycle, InputCycleResetPosition, AmountOfShift;
-  bool HitLocationsInCycle [16], MainOutPulseStart, ThruPulseStart, CycleOutPulseStart, TransmitPulses;
+  bool HitLocationsInCycle [16], MainOutPulseStart, ThruPulseStart, CycleOutPulseStart, TransmitPulses, SnapToClosestPoint;
   float QuantizationPointSpacing, PolygonPointSpacing, QuantizationPointsOnCircle[16], PolygonVertexes[16], fractionalShiftOfPolygon;
 
   public:
@@ -538,6 +538,7 @@ EuclideanCalculator::EuclideanCalculator(){   //initalize values. See DividerMul
   CycleOutPulseStart = false;
   MainOutPulseStart = false;
   ThruPulseStart = false;
+  SnapToClosestPoint = false;
   PositionInInputCycle = 0;
   fractionalShiftOfPolygon = 0;
   AmountOfShift = 0;
@@ -654,6 +655,7 @@ void EuclideanCalculator::RecalculateRhythm(){
    for(int i=0; i<NumberOfHits; i++){
     if (PolygonVertexes[i]>=1){
         PolygonVertexes[i] = PolygonVertexes[i] - 1.0;
+
     }
    }
     
@@ -674,8 +676,21 @@ void EuclideanCalculator::RecalculateRhythm(){
     if(mTemp == InputCycleQuantization){
       mTemp = 0;
     }
+
+      if(SnapToClosestPoint){
+          //alternative mode only: for each polygon point, snap to the quantizaiton point *anticlockwise* around the circle, if that is closer than the clockwise one we have identified
+          if(mTemp>0){
+            if( (QuantizationPointsOnCircle[mTemp]-PolygonVertexes[k]) > (PolygonVertexes[k]-QuantizationPointsOnCircle[(mTemp-1)])){
+              mTemp = mTemp-1;
+            } 
+          }else{
+            if( 0.0-PolygonVertexes[k] > ((1+PolygonVertexes[k])-QuantizationPointsOnCircle[InputCycleQuantization-1]) ){
+              mTemp = InputCycleQuantization-1;
+            }
+          }
+      }
     HitLocationsInCycle[mTemp] = true;
-  }
+  } 
 }
 
   bool EuclideanCalculator::ShouldWeOutputMainPulse() {
