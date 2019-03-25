@@ -185,26 +185,30 @@ unsigned long int PulsePredictor::TimeOflastPulsePlusN (int n){
 
 class TrigOutManager {
   unsigned long TrigLengthMicros, CurrentPulseEndtimeMicros; //Length of trigger pulse in microseconds
+  const unsigned long GateModeTimeoutLengthMicros = 20000; //this is the time after initiation that a pulse can be killed by an external function.
+  //^ this is neccessary because otherwise, in clock divider mode, through pulses and main pulses which ought to be exactly coincident are actually staggered a little, and if the through pulse comes slightly later - we don't want it to kill the main pulse in that case.
   bool OutputPulseOccuring; //if True, we are in the middle of outputting a pulse
   bool RolloverFlag; //if True, we are in the middle of a pulse which will straddle the point when micros() rolls over
 
   public:
   TrigOutManager (); //initializes trigger length. Currently this is hardwired into the function.
   void StartPulse();
-  bool ShouldWeBeOutputting();
+  void EndPulse();
+  bool ShouldWeBeOutputting(bool);
 } TrigOutManager_Thru, TrigOutManager_Cycle, TrigOutManager_Main;
 
 
 //initialize variables
 TrigOutManager::TrigOutManager (){
   TrigLengthMicros = 1000;
+  //GateModeTimeoutLengthMicros = 20000;
 }
 
 
 void TrigOutManager::StartPulse(){
   OutputPulseOccuring = true;
   CurrentPulseEndtimeMicros = micros() + TrigLengthMicros;
-
+  
   //If the micros() timer is close to rollover, then the value of CurrentPulseEndtimeMicros will have rolled over, as both are unsigned long.
   //Work out if such a rollover has occured:
   if (CurrentPulseEndtimeMicros < TrigLengthMicros){  
@@ -212,26 +216,40 @@ void TrigOutManager::StartPulse(){
       RolloverFlag = false; }
 }
 
-bool TrigOutManager::ShouldWeBeOutputting(){
-
-  if(OutputPulseOccuring){
-    
-    if(RolloverFlag == false){
-      if (micros()>CurrentPulseEndtimeMicros){
-        OutputPulseOccuring = false;
-        return false;
-      } else {
-        return true;
-      }
-    }else{ // RolleverFlag == true
-      if ( (micros()>CurrentPulseEndtimeMicros) && (micros() < 100*TrigLengthMicros) ){
-        OutputPulseOccuring = false;
-        return false;
-      } else {
-        return true;
-      }
+void TrigOutManager::EndPulse(){
+    //We allow a pulse to be cancelled only after a certain amount of time since the pulse started. this is neccessary because otherwise, in clock divider mode, through pulses and main pulses which ought to be exactly coincident are actually staggered a little, and if the through pulse comes slightly later - we don't want it to kill the main pulse in that case.
+    if (micros()>(CurrentPulseEndtimeMicros+GateModeTimeoutLengthMicros)){
+           OutputPulseOccuring = false;
     }
-  } else {
+  //To do: deal with rollover!
+}
+
+
+bool TrigOutManager::ShouldWeBeOutputting(bool GateMode){
+  if(OutputPulseOccuring){
+  //if gate mode is on, we only stop a pulse when specifically instructed
+  //otherwise, we check against the time the current pulse is supposed to end
+
+      if(GateMode==true){
+          return true;
+        }else{ // check against the time the current pulse is supposed to end
+               if(RolloverFlag == false){
+                 if (micros()>CurrentPulseEndtimeMicros){
+                    OutputPulseOccuring = false;
+                   return false;
+                  } else {
+                    return true;
+                 }
+               }else{ // RolleverFlag == true
+                 if ( (micros()>CurrentPulseEndtimeMicros) && (micros() < 100*TrigLengthMicros) ){
+                   OutputPulseOccuring = false;
+                   return false;
+                 } else {
+                   return true;
+                 }
+              }
+        }
+  } else { //no output pulse occuring
     return false;
   }
   
@@ -263,6 +281,9 @@ class DividerMultiplier {
   void ShiftPositionInInputCycle(int);
   void UpdateFractionalShuffleTime(float);
   void PrintPositionInOutputCycle();
+  int ReportPositionInCycle();
+  void SetPositionInCycle(int);
+  
 } DividerMultiplierMain;
 
 
@@ -344,8 +365,10 @@ void DividerMultiplier::CalculateOutputTimesMidCycle(){
 //if we reached the end of the cycle, loop back to the start, emit both pulses, and calculate the times for the next set of pulses
 void DividerMultiplier::InputPulse() {
   PositionInInputCycle = PositionInInputCycle + 1;
-  
-  ThruPulseStart=true; // pass to thru output
+
+    //If the Main trigger out gate mode is engaged, we need to end any gate-length pulse that might be occuring
+   //TrigOutManager_Main.EndPulse();
+   ThruPulseStart=true; // pass to thru output
 
   if (PositionInInputCycle >= InputCycleLength){    
       PositionInInputCycle = 0;
@@ -354,6 +377,10 @@ void DividerMultiplier::InputPulse() {
       if(fractionalShuffle == 0.0){MainOutPulseStart = true;}
       CycleStartTime = millis();
       CalculateOutputTimesAtCycleStart();
+  } else {
+ //   //If the Main trigger out gate mode is engaged, we need to end any gate-length pulse that might be occuring
+ //   TrigOutManager_Main.EndPulse();
+
   }
       
 }
@@ -382,11 +409,7 @@ bool DividerMultiplier::ShouldWeOutputCyclePulse(){
 bool DividerMultiplier::ShouldWeOutputMainPulse(){
   if (PositionInOutputCycle<OutputCycleLength){ //if this is not true, we already output the last pulse of the cycle and must wait until the recycle is reset
     if (millis() > PulseTimes[PositionInOutputCycle]){ //Check the current time against the time we know the upcoming pulse should start
-      //Serial.print("ShouldWeOutputMainPulse ");
-      //Serial.print(PositionInOutputCycle);
       PositionInOutputCycle = PositionInOutputCycle + 1;  
-      //Serial.print(" -> ");
-      //Serial.println(PositionInOutputCycle);
       return true;
     } else {  return false; } 
     } else {return false; }
@@ -472,6 +495,14 @@ void DividerMultiplier::PrintPositionInOutputCycle(){
   Debug_PositionInOutputCycleOld = PositionInOutputCycle;
 }
 
+int DividerMultiplier::ReportPositionInCycle(){
+  return PositionInInputCycle;
+}
+
+void DividerMultiplier::SetPositionInCycle(int NewPosition){
+  PositionInInputCycle = NewPosition;
+}
+
 
 //------------------------------------------------------------------------------------------------------------------------
 // EuclieanCalculator will handle euclidean rhythm generation.
@@ -495,6 +526,8 @@ class EuclideanCalculator {
   bool ShouldWeOutputMainPulse();
   bool ShouldWeOutputCyclePulse();
   bool ShouldWeOutputThruPulse();
+  int ReportPositionInCycle();
+  void SetPositionInCycle(int);
   
 } EuclideanCalculatorMain;
 
@@ -509,6 +542,14 @@ EuclideanCalculator::EuclideanCalculator(){   //initalize values. See DividerMul
   fractionalShiftOfPolygon = 0;
   AmountOfShift = 0;
   InputCycleResetPosition = 0; //the position in the input cycle at which we transmit the "cycle" pulse, and which we start at when the sequence restarts. this allows us to manage phase shifts. 
+}
+
+int EuclideanCalculator::ReportPositionInCycle(){
+  return PositionInInputCycle;
+}
+
+void EuclideanCalculator::SetPositionInCycle(int NewPosition){
+  PositionInInputCycle = NewPosition;
 }
 
 void EuclideanCalculator::UpdateKnobValues(int InCycleQyantizationKnobPlusCV, int NumberOfHitsKnobPlusCV, float ShuffleKnobPlusCV, float ShiftInstruction){
@@ -562,8 +603,13 @@ void EuclideanCalculator::InputPulse() {
   //if we are at the "InputCycleResetPosition", emit cycle pulse
 
   PositionInInputCycle = PositionInInputCycle + 1;
-  
+
+  //Pass a thru pulse
   ThruPulseStart=true;
+
+  //If we are in main-out gate mode, end any gate which is occuring
+  //TrigOutManager_Main.EndPulse();
+  
     if (PositionInInputCycle >= InputCycleQuantization){    
       PositionInInputCycle = 0;
       CycleOutPulseStart = true;
@@ -728,6 +774,78 @@ void JitterSmoother::SetSampleIntervalandThreshold(unsigned long int NewSampleIn
   Threshold = NewThreshold;
 }
 
+//---------------------------------------------------------------
+//ModeController handles switching between different modes of operation
+class ModeController {
+  bool EuclideanMode, DivMultMode, MainOutputGateOutMode;
+  bool TempSwitchState;
+
+  public:
+  ModeController();
+  void ReadModeSwitch();
+  void ReadGateSwitch();
+  bool AreWeInEuclideanMode();
+  bool AreWeInDividerMultiplierMode();
+  bool AreWeInMainOutputGateMode();
+} ModeControllerMaster;
+
+ModeController::ModeController(){ //initialize values
+  EuclideanMode = true;
+  DivMultMode = false;
+  MainOutputGateOutMode = false;
+}
+
+void ModeController::ReadModeSwitch(){
+  TempSwitchState = digitalRead(SwPin_DivEuc);
+  if(DivMultMode != TempSwitchState){ // if switch statoe doesn't correspond to the mode we're in currently
+    if(TempSwitchState == true){
+      DivMultMode = true;
+      EuclideanMode = false;
+      DividerMultiplierMain.SetPositionInCycle(EuclideanCalculatorMain.ReportPositionInCycle());  
+      DividerMultiplierMain.CalculateOutputTimesMidCycle();
+    }else if(TempSwitchState == false){
+      DivMultMode = false;
+      EuclideanMode = true;
+      EuclideanCalculatorMain.SetPositionInCycle(DividerMultiplierMain.ReportPositionInCycle());    
+    }
+  }
+}
+
+
+void ModeController::ReadGateSwitch(){
+  TempSwitchState = digitalRead(SwPin_OutModes);
+  if(TempSwitchState != MainOutputGateOutMode){ // if switch statoe doesn't correspond to the mode we're in currently
+    if(TempSwitchState == true){
+      MainOutputGateOutMode = true;
+    } else {
+      MainOutputGateOutMode = false;
+    }
+  }
+}
+
+bool ModeController::AreWeInEuclideanMode(){
+  if(EuclideanMode == true){
+    return true;
+  } else {
+    return false;
+  }
+}
+
+bool ModeController::AreWeInDividerMultiplierMode(){
+  if(DivMultMode == true){
+    return true;
+  } else {
+    return false;
+  }
+}
+
+bool ModeController::AreWeInMainOutputGateMode(){
+  if(MainOutputGateOutMode == true){
+    return true;
+  } else {
+    return false;
+  }
+}
 
 //----------------------------------------------------------------------------------------------------------------------
 
@@ -787,8 +905,8 @@ void CVassigner::UpdateCVrouting(){
     }else if( (SwPin_CVup_State == false) && (SwPin_CVdown_State == true) ){
       CVcontrolCycleLength = false;
       CVcontrolDivisions = false;
-      CVcontrolShuffle = true;
-      CVcontrolShift = false;
+      CVcontrolShuffle = false;
+      CVcontrolShift = true;
     }else{
       //Serial.println("ERROR: the CV assign switch is both up and down!");
     }
@@ -889,8 +1007,10 @@ void setup() {
 //----------------------------------------------------------------------------------------------------------------------
 
 void loop() {
-  //test
-  
+
+  ModeControllerMaster.ReadModeSwitch();
+  ModeControllerMaster.ReadGateSwitch();
+    
   // deal with input
   clockInState = digitalRead(InPin_Trig);
   if(clockInState == 0 && clockInPrevState == 1){      //............if the Trigger In voltage switches from low to high
@@ -899,7 +1019,7 @@ void loop() {
     InputPulsePredictor.InputPulse();
 
     //pass to whatever's controlling the current output mode
-    if( EuclideanMode_temp ){
+    if( ModeControllerMaster.AreWeInEuclideanMode() ){
       EuclideanCalculatorMain.InputPulse();
     }else{
       DividerMultiplierMain.InputPulse();
@@ -956,7 +1076,7 @@ void loop() {
   //if(EncoderShiftInstruction!=0){Serial.println(EncoderShiftInstruction);}
 
   //Apply knob changes and Shift/Shuffle to pattern, according to encoder changes AND control voltage changes as appropriate 
-  if ( EuclideanMode_temp ) {
+  if ( ModeControllerMaster.AreWeInEuclideanMode() ) {
      EuclideanCalculatorMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, EncoderShuffleInstruction + CVassignerMaster.ReturnFractionalShuffleModifier(), -EncoderShiftInstruction + CVassignerMaster.ReturnShiftModifier());
   } else {
      DividerMultiplierMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled);
@@ -973,11 +1093,13 @@ void loop() {
 
 
   // deal with starting output pulses
-  if ( EuclideanMode_temp )
+  //for gate output mode, we need to tell the trigger manager to finish emitting pulse(gate) only if a Thru trigger is signalled without an accompanying main trigger
+  if ( ModeControllerMaster.AreWeInEuclideanMode() )
   {
     // ask euclidean generator whether we should output a pulse
     if(EuclideanCalculatorMain.ShouldWeOutputThruPulse()==true){
         TrigOutManager_Thru.StartPulse();
+        TrigOutManager_Main.EndPulse();
       }
     
       if(EuclideanCalculatorMain.ShouldWeOutputCyclePulse()==true){
@@ -985,13 +1107,15 @@ void loop() {
       }
     
       if(EuclideanCalculatorMain.ShouldWeOutputMainPulse()==true){
-        TrigOutManager_Main.StartPulse();
         TrigOutManager_Thru.StartPulse();
+        TrigOutManager_Main.StartPulse();
       }
   } else  {
     // ask divider/multiplier whether we should output a pulse
       if(DividerMultiplierMain.ShouldWeOutputThruPulse()==true){
         TrigOutManager_Thru.StartPulse();
+        TrigOutManager_Main.EndPulse();
+        TrigOutManager_Main.EndPulse();
       }
     
       if(DividerMultiplierMain.ShouldWeOutputCyclePulse()==true){
@@ -999,8 +1123,9 @@ void loop() {
       }
     
       if(DividerMultiplierMain.ShouldWeOutputMainPulse()==true){
-        TrigOutManager_Main.StartPulse();
         TrigOutManager_Thru.StartPulse();
+        TrigOutManager_Main.EndPulse();
+        TrigOutManager_Main.StartPulse();
       }
   }
     
@@ -1012,19 +1137,19 @@ void loop() {
  
 
   //deal with actually setting voltage on the outputs
-  if(TrigOutManager_Thru.ShouldWeBeOutputting()==true){
+  if(TrigOutManager_Thru.ShouldWeBeOutputting(false)==true){
     digitalWrite(OutPin_Thru,HIGH);
   } else {
     digitalWrite(OutPin_Thru,LOW);
   }
 
-  if(TrigOutManager_Main.ShouldWeBeOutputting()==true){
+  if(TrigOutManager_Main.ShouldWeBeOutputting(ModeControllerMaster.AreWeInMainOutputGateMode())){
     digitalWrite(OutPin_MainOut,HIGH);
   } else {
     digitalWrite(OutPin_MainOut,LOW);
   }
 
-  if(TrigOutManager_Cycle.ShouldWeBeOutputting()==true){
+  if(TrigOutManager_Cycle.ShouldWeBeOutputting(false)==true){
     digitalWrite(OutPin_Cycle,HIGH);
   } else {
     digitalWrite(OutPin_Cycle,LOW);
