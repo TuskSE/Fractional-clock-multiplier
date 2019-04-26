@@ -2,23 +2,29 @@
 #include <Encoder.h>
 
 //Define all the pins
-const int SwPin_DivEuc = 0;
-const int SwPin_OutModes = 1;
-const int SwPin_CVup = 2;
-const int SwPin_CVdown = 3;
-const int SwPin_Encoder = 6;
-const int CtrPin_CVamt = 21;
-const int CtrPin_Divisions = 20;
-const int CtrPin_Length = 19;
-const int OutPin_Cycle = 7;
-const int OutPin_MainOut = 8;
-const int OutPin_Thru = 9;
-const int InPin_Trig = 18; //Low input voltage = HIGH reading on pin.
-const int InPin_CV = 17;
+const int SwPin_DivEuc = 0;  // Low input = switch in upper position
+const int SwPin_DivEuc2 = 1;   // Low input = switch in lower position
+const int SwPin_OutModes = 2;   // Low input = switch in upper position
+const int SwPin_OutModes2 = 3;  // Low input = switch in lower position
+const int SwPin_CVassign = 4;   //Low input = switch pressed
+const int SwPin_Encoder = 7;
+const int CtrPin_CVamt = 15;
+const int CtrPin_Divisions = 19;
+const int CtrPin_Length = 18;
+const int OutPin_Cycle = 8;
+const int OutPin_MainOut = 9;
+const int OutPin_Thru = 10;
+const int InPin_Trig = 11; //Low input voltage = HIGH reading on pin.
+const int InPin_CV = 14;
+const int InPin_Reset = 21;
 const int LEDPin_Shuffle = 16;
-const int LEDPin_internal = 13;
-const int EncPinA = 4;
-const int EncPinB = 5;
+const int LEDPin_CV_ind_Length = 23;
+const int LEDPin_CV_ind_Divs = 22;
+const int LEDPin_CV_ind_Shift = 17;
+const int LEDPin_CV_ind_Shuffle = 20;
+//const int LEDPin_internal = 13;
+const int EncPinA = 5;
+const int EncPinB = 6;
 
 //recentPresses[] stores the times of the 6 most recent switch presses
 //[0] = most recent, [5] = most distant
@@ -791,50 +797,112 @@ void JitterSmoother::SetSampleIntervalandThreshold(unsigned long int NewSampleIn
 
 //---------------------------------------------------------------
 //ModeController handles switching between different modes of operation
-class ModeController {
-  bool EuclideanMode, DivMultMode, MainOutputGateOutMode;
-  bool TempSwitchState;
 
+class ModeController {
+  bool EuclideanMode, DivMultMode, ThirdMode, MainOutputGateOutMode;
+  bool TempModeSwitch1State, TempModeSwitch2State, OldModeSwitch1State, OldModeSwitch2State; // if ModeSwitch1 is high and 2 is low, we are in euclidean mode 
+  bool TempOutSwitch1State, TempOutSwitch2State, OldOutSwitch1State, OldOutSwitch2State;
+  int ModeSwitchChangeFlag, GateSwitchChangeFlag;
+  const int Debouncing_NoOfReads = 6; // Debouncing: when a switch changes state, only accept the new state when it has been constant for the last N reads
+  
   public:
   ModeController();
   void ReadModeSwitch();
   void ReadGateSwitch();
+  void UpdateMode(bool,bool);
+  void UpdateOutputMode(bool,bool);
   bool AreWeInEuclideanMode();
   bool AreWeInDividerMultiplierMode();
   bool AreWeInMainOutputGateMode();
 } ModeControllerMaster;
 
 ModeController::ModeController(){ //initialize values
-  EuclideanMode = true;
-  DivMultMode = false;
+  ModeController::UpdateMode(digitalRead(SwPin_DivEuc),digitalRead(SwPin_DivEuc2));
+  ModeSwitchChangeFlag = 0;
+  GateSwitchChangeFlag = 0;
   MainOutputGateOutMode = false;
 }
 
 void ModeController::ReadModeSwitch(){
-  TempSwitchState = digitalRead(SwPin_DivEuc);
-  if(DivMultMode != TempSwitchState){ // if switch statoe doesn't correspond to the mode we're in currently
-    if(TempSwitchState == true){
-      DivMultMode = true;
-      EuclideanMode = false;
-      DividerMultiplierMain.SetPositionInCycle(EuclideanCalculatorMain.ReportPositionInCycle());  
-      DividerMultiplierMain.CalculateOutputTimesMidCycle();
-    }else if(TempSwitchState == false){
-      DivMultMode = false;
-      EuclideanMode = true;
-      EuclideanCalculatorMain.SetPositionInCycle(DividerMultiplierMain.ReportPositionInCycle());    
+  //read position of switch
+  TempModeSwitch1State = digitalRead(SwPin_DivEuc);
+  TempModeSwitch2State = digitalRead(SwPin_DivEuc2);
+
+  //check if switch position has changed. If yes, then update the mode
+  if(TempModeSwitch1State != OldModeSwitch1State || TempModeSwitch2State != OldModeSwitch2State){
+    ModeSwitchChangeFlag = 1;
+    //the switch position has been changed. If it remains the same next time we measure it, *then* implement the mode change
+  } else if (ModeSwitchChangeFlag > 0){
+    ModeSwitchChangeFlag = ModeSwitchChangeFlag + 1;
+    if(ModeSwitchChangeFlag>Debouncing_NoOfReads){
+      ModeController::UpdateMode(TempModeSwitch1State, TempModeSwitch2State);
+      ModeSwitchChangeFlag = 0;
     }
   }
+
+  //remember switch position for next time
+  OldModeSwitch1State = TempModeSwitch1State;
+  OldModeSwitch2State = TempModeSwitch2State;
+
+}
+
+
+void ModeController::UpdateMode(bool Switch1, bool Switch2){
+  if(Switch1 == 0){
+    EuclideanMode = false;
+    DivMultMode = true;
+    ThirdMode = false;
+    
+    DividerMultiplierMain.SetPositionInCycle(EuclideanCalculatorMain.ReportPositionInCycle());  
+    DividerMultiplierMain.CalculateOutputTimesMidCycle();
+    
+  } else if (Switch2 == 0){
+    EuclideanMode = true;
+    DivMultMode = false;
+    ThirdMode = false;
+    
+    EuclideanCalculatorMain.SetPositionInCycle(DividerMultiplierMain.ReportPositionInCycle());
+
+  } else if( (Switch1==1) && (Switch2==1) ){
+    EuclideanMode = false;
+    DivMultMode = false;
+    ThirdMode = true;
+  }
+  
 }
 
 
 void ModeController::ReadGateSwitch(){
-  TempSwitchState = digitalRead(SwPin_OutModes);
-  if(TempSwitchState != MainOutputGateOutMode){ // if switch statoe doesn't correspond to the mode we're in currently
-    if(TempSwitchState == true){
-      MainOutputGateOutMode = true;
-    } else {
-      MainOutputGateOutMode = false;
+  //read position of switch
+  TempOutSwitch1State = digitalRead(SwPin_OutModes);
+  TempOutSwitch2State = digitalRead(SwPin_OutModes2);
+
+  //check if switch position has changed. If yes, then update the mode
+  if(TempOutSwitch1State != OldOutSwitch1State || TempOutSwitch2State != OldOutSwitch2State){
+    GateSwitchChangeFlag = 1;
+    //the switch position has been changed. If it remains the same next time we measure it, *then* implement the mode change
+  } else if (GateSwitchChangeFlag > 0){
+    GateSwitchChangeFlag = GateSwitchChangeFlag + 1;
+    if(GateSwitchChangeFlag>Debouncing_NoOfReads){
+      ModeController::UpdateOutputMode(TempOutSwitch1State, TempOutSwitch2State);
+      GateSwitchChangeFlag = 0;
     }
+  }
+
+  //remember switch position for next time
+  OldOutSwitch1State = TempOutSwitch1State;
+  OldOutSwitch2State = TempOutSwitch2State;
+
+}
+
+
+void ModeController::UpdateOutputMode(bool Switch1, bool Switch2){
+  if(Switch1 == 0){
+    MainOutputGateOutMode = false;   
+  } else if (Switch2 == 0){
+    MainOutputGateOutMode = true;
+  } else if( (Switch1==1) && (Switch2==1) ){
+    MainOutputGateOutMode = false;
   }
 }
 
@@ -866,19 +934,22 @@ bool ModeController::AreWeInMainOutputGateMode(){
 
 //the CV assigner will control the routing of CV signals. Currently, everything is controlled by a 3-way switch and this scheme is a bit overkill. but I might want something more sophisticated in future.
 class CVassigner {
-  bool SwPin_CVup_State;
-  bool SwPin_CVdown_State;
+  bool TempCVbuttonState, OldCVbuttonState, CVdestination [6] {true, false, false, false, false, false}, CVdestinationTemp [6];
 //  bool CVcontrolCycleLength, CVcontrolDivisions, CVcontrolShuffle, CVcontrolShift;   <-- I made these to global for now
   float ControlValue_Attenuverter, ControlValue_CVin, ShuffleModifierOld, ShuffleModifierNew, ShuffleModifierChange;
   int CVzeroReading, ShiftModifierOld, ShiftModifierNew, ShiftModifierChange; //the analogRead that results when the control votlage = 0;
+  int CyclesSincePreviousButtonPress;
   const int CVscalingFactor = 80; //scales the output of CVassigner::readCV to give a result <2000
   const int ShiftCVScalingFactor = 200; //scales the effect CVassigner::ReturnShiftModifier
   const int ShuffleCVScalingFactor = 80; //scales the effect CVassigner::ReturnShuffleModifier
+  const int ButtonRetrigCycles = 10; //for debouncing, only register depression of the switch if it lasts for more than N cycles
+  const int CVLedBrightness = 70;
 
 
   public:
   CVassigner ();
   void UpdateCVrouting();
+  void CheckButton();
   int readCV();
   int ReturnShiftModifier();
   float ReturnFractionalShuffleModifier();
@@ -886,8 +957,6 @@ class CVassigner {
 } CVassignerMaster;
 
 CVassigner::CVassigner(){  //default starting state is for CV to control divisions
-  SwPin_CVup_State = false;
-  SwPin_CVdown_State = false;
   CVcontrolCycleLength = false;
   CVcontrolDivisions = true;
   CVcontrolShuffle = false;
@@ -901,40 +970,107 @@ CVassigner::CVassigner(){  //default starting state is for CV to control divisio
   ShuffleModifierOld = 0.0;
   ShuffleModifierNew = 0.0;
   ShuffleModifierChange = 0.0;
+  CyclesSincePreviousButtonPress = 0;
+  OldCVbuttonState = 1;
 }
 
-void CVassigner::UpdateCVrouting(){
-  if ( SwPin_CVup_State != digitalRead(SwPin_CVup) || SwPin_CVdown_State != digitalRead(SwPin_CVdown)  ){   //if the CV switch has changed position
-    SwPin_CVup_State = digitalRead(SwPin_CVup);
-    SwPin_CVdown_State = digitalRead(SwPin_CVdown);
-    if( (SwPin_CVup_State == true) && (SwPin_CVdown_State == false) ){
-      CVcontrolCycleLength = true;
-      CVcontrolDivisions = false;
-      CVcontrolShuffle = false;
-      CVcontrolShift = false;
-    }else if( (SwPin_CVup_State == true) && (SwPin_CVdown_State == true) ){  //switch in middle position. This might be false/false, depending on the switch, I guess
-      CVcontrolCycleLength = false;
-      CVcontrolDivisions = true;
-      CVcontrolShuffle = false;
-      CVcontrolShift = false;
-    }else if( (SwPin_CVup_State == false) && (SwPin_CVdown_State == true) ){
-      CVcontrolCycleLength = false;
-      CVcontrolDivisions = false;
-      CVcontrolShuffle = false;
-      CVcontrolShift = true;
+void CVassigner::CheckButton(){
+    //read button state
+    TempCVbuttonState = digitalRead(SwPin_CVassign);   //0 == switch depressed (closed)
+
+    if(TempCVbuttonState == 0){
+      if(OldCVbuttonState == 1){  
+        //if switch went from open to closed, start counting. only register the press after we've counted a few consecutive cycles of switch depression. This avoids debouncing issues
+        CyclesSincePreviousButtonPress = 1;
+      } else if (OldCVbuttonState == 0){
+        CyclesSincePreviousButtonPress = CyclesSincePreviousButtonPress+1;
+        if(CyclesSincePreviousButtonPress==ButtonRetrigCycles){
+          CVassigner::UpdateCVrouting();
+          Serial.println("press!");
+        }
+      }
     }else{
-      //Serial.println("ERROR: the CV assign switch is both up and down!");
+      CyclesSincePreviousButtonPress = 0;
     }
-  }
+
+    //remember button state for next time
+    OldCVbuttonState = TempCVbuttonState;
+}
+
+
+void CVassigner::UpdateCVrouting(){
+//triggered on button press
+  
+//each element of the CVdestination array correspond to a CV destination, which can be active or inactive
+//the first element corresponds to no destination
+//on every button press, rotate the array to change the active destination
+
+CVdestinationTemp[0] = CVdestination[5];
+for(int i=1; i<6; i++){
+  CVdestinationTemp[i] = CVdestination[i-1];
+}
+
+for(int i=0; i<6; i++){
+  CVdestination[i] = CVdestinationTemp[i];
+}
+
+
+
+if(CVdestination[1]){
+  CVcontrolCycleLength = true;
+  analogWrite(LEDPin_CV_ind_Length, CVLedBrightness);
+} else {
+  CVcontrolCycleLength = false;
+  analogWrite(LEDPin_CV_ind_Length, 0);
+}
+
+
+if(CVdestination[2]){
+  CVcontrolDivisions = true;
+  analogWrite(LEDPin_CV_ind_Divs, CVLedBrightness);
+} else {
+  CVcontrolDivisions = false;
+  analogWrite(LEDPin_CV_ind_Divs, 0);
+}
+
+if(CVdestination[3]){
+  CVcontrolShuffle = true;
+  analogWrite(LEDPin_CV_ind_Shuffle, CVLedBrightness);
+} else {
+  CVcontrolShuffle = false;
+  analogWrite(LEDPin_CV_ind_Shuffle, 0);
+}
+
+if(CVdestination[4]){
+  CVcontrolShift = true;
+  analogWrite(LEDPin_CV_ind_Shift, CVLedBrightness);
+} else {
+  CVcontrolShift = false;
+  analogWrite(LEDPin_CV_ind_Shift, 0);
+}
+
+
+
 }
 
 //read CV will return an value between +- ~4000, scaled by the attenuverter (CV amt) knob. 
 int CVassigner::readCV(){
   ControlValue_Attenuverter = map(analogRead(CtrPin_CVamt),0,4096,+100,-100);
   ControlValue_Attenuverter = map(JitterSmootherAttenuverter.SmoothChanges(analogRead(CtrPin_CVamt)),0,4096,+100,-100);  //read twice to give time for the ADC capacitor to equilibrate, avoiding crosstalk from other analog reads 
+  
+  
+  
   //aside: do we need a voltage smoother on the above?
   ControlValue_CVin = analogRead(InPin_CV)-CVzeroReading;
+      Serial.print(ControlValue_CVin);
+
+    Serial.print(" ");
+
   ControlValue_CVin = JitterSmootherCV.SmoothChanges(analogRead(InPin_CV))-CVzeroReading; //read twice to give time for the ADC capacitor to equilibrate, avoiding crosstalk from other analog reads 
+
+  Serial.print(ControlValue_Attenuverter);
+  Serial.print(" ");
+  Serial.println(ControlValue_CVin);
   
   return (int)(ControlValue_Attenuverter*ControlValue_CVin/CVscalingFactor);
 
@@ -991,21 +1127,22 @@ void setup() {
   
   //Configure pins
   pinMode(SwPin_DivEuc,INPUT_PULLUP);
+  pinMode(SwPin_DivEuc2,INPUT_PULLUP);
   pinMode(SwPin_OutModes,INPUT_PULLUP);
-  pinMode(SwPin_CVup,INPUT_PULLUP);
-  pinMode(SwPin_CVdown,INPUT_PULLUP);
+  pinMode(SwPin_OutModes2,INPUT_PULLUP);
+  pinMode(SwPin_CVassign,INPUT_PULLUP);
   pinMode(SwPin_Encoder,INPUT);
-  
   pinMode(CtrPin_CVamt,INPUT);
   pinMode(CtrPin_Divisions,INPUT);
   pinMode(CtrPin_Length,INPUT);
-
   pinMode(OutPin_Cycle,OUTPUT);
   pinMode(OutPin_MainOut,OUTPUT);
   pinMode(OutPin_Thru,OUTPUT);
   pinMode(LEDPin_Shuffle,OUTPUT);
-  pinMode(LEDPin_internal,OUTPUT);
-
+  pinMode(LEDPin_CV_ind_Length,OUTPUT);
+  pinMode(LEDPin_CV_ind_Divs,OUTPUT);
+  pinMode(LEDPin_CV_ind_Shift,OUTPUT);
+  pinMode(LEDPin_CV_ind_Shuffle,OUTPUT);
   pinMode(InPin_Trig,INPUT_PULLUP);
   pinMode(InPin_CV,INPUT);
   
@@ -1060,8 +1197,7 @@ void loop() {
     if(ControlValue_Length < 0){ControlValue_Length = 0;}
     if(ControlValue_Length > 4096){ControlValue_Length = 4096;}
   }
-
-
+  
   if(CVcontrolDivisions == true){
     ControlValue_Divisions = ControlValue_Divisions + CVassignerMaster.readCV();
     if(ControlValue_Divisions < 0){ControlValue_Divisions = 0;}
@@ -1089,7 +1225,6 @@ void loop() {
     }
   }
 
-
   //if(EncoderShiftInstruction!=0){Serial.println(EncoderShiftInstruction);}
 
   //Apply knob changes and Shift/Shuffle to pattern, according to encoder changes AND control voltage changes as appropriate 
@@ -1103,11 +1238,10 @@ void loop() {
 
   EncoderShiftInstruction = 0; 
   EncoderShuffleInstruction = 0.0;
-  
+ 
   
   //check routing of CV signals
-  CVassignerMaster.UpdateCVrouting();
-
+  CVassignerMaster.CheckButton();
 
   // deal with starting output pulses
   //for gate output mode, we need to tell the trigger manager to finish emitting pulse(gate) only if a Thru trigger is signalled without an accompanying main trigger
@@ -1145,7 +1279,8 @@ void loop() {
         TrigOutManager_Main.StartPulse();
       }
   }
-
+    
+  
   //deal with actually setting voltage on the outputs
   if(TrigOutManager_Thru.ShouldWeBeOutputting(false)==true){
     digitalWrite(OutPin_Thru,HIGH);
@@ -1164,5 +1299,6 @@ void loop() {
   } else {
     digitalWrite(OutPin_Cycle,LOW);
   }
-  
+
+
 }
