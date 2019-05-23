@@ -49,6 +49,8 @@ int ControlValue_Length, ControlValue_Length_Scaled =1;
 double pressTimeTemp = 0; //temporarily stores the time, when the button is pressed
 int clockInState = 0;
 int clockInPrevState = 0; // this will remember if the clock input was "on" in the previous cycle 
+int resetInState = 0;
+int resetInPrevState = 0;
 
 //multiplication/division factors. These will eventually be controlled by pots.
 //float ClicksPerCycle = 8;
@@ -328,25 +330,25 @@ void DividerMultiplier::CalculateOutputTimesAtCycleStart() {
 
  if(CycleStartTime !=0 && ExpectedCycleEndTime !=0){
 
-  ExpectedCycleLength = ExpectedCycleEndTime - CycleStartTime;
-  ExpectedIntervalTime = ExpectedCycleLength/OutputCycleLength;
-
-  //if output cycle length = 0, output nothing 
-  if(OutputCycleLength>0){   
-      TransmitPulses = true;
-  } else {
-    TransmitPulses = false;
-  }
+    ExpectedCycleLength = ExpectedCycleEndTime - CycleStartTime;
+    ExpectedIntervalTime = ExpectedCycleLength/OutputCycleLength;
   
-  PulseTimes[0] = CycleStartTime;
-  
-  //apply shuffle
-  PulseTimes[0] = PulseTimes[0] + (fractionalShuffle*ExpectedIntervalTime);
-
-  //calculate the remaining output pulse times
-    for (int i=1; i < OutputCycleLength; i++){
-      PulseTimes[i] = PulseTimes[i-1]+ExpectedIntervalTime;
+    //if output cycle length = 0, output nothing 
+    if(OutputCycleLength>0){   
+        TransmitPulses = true;
+    } else {
+      TransmitPulses = false;
     }
+    
+    PulseTimes[0] = CycleStartTime;
+    
+    //apply shuffle
+    PulseTimes[0] = PulseTimes[0] + (fractionalShuffle*ExpectedIntervalTime);
+  
+    //calculate the remaining output pulse times
+      for (int i=1; i < OutputCycleLength; i++){
+        PulseTimes[i] = PulseTimes[i-1]+ExpectedIntervalTime;
+      }
   }
 
 }
@@ -413,10 +415,12 @@ void DividerMultiplier::InputPulse() {
       
 }
 
+// Accept a "reset" command (i.e. from the "reset" input jack"), which primes the input cycle to reset upon recipt of the next clock pulse
 
 void DividerMultiplier::CycleReset() {
-  //This will mark the next input pulse as the start of the cycle
-    PositionInInputCycle=InputCycleLength-1;
+  if(InputCycleLength>1){
+      PositionInInputCycle = InputCycleLength - 1;
+  }
 }
 
 
@@ -551,6 +555,7 @@ class EuclideanCalculator {
   void RecalculateRhythm();
   void UpdateKnobValues(int, int, float, float);
   void InputPulse();
+  void CycleReset();
   bool ShouldWeOutputMainPulse();
   bool ShouldWeOutputCyclePulse();
   bool ShouldWeOutputThruPulse();
@@ -649,6 +654,15 @@ void EuclideanCalculator::InputPulse() {
     MainOutPulseStart = true;
     }
   
+}
+
+
+
+void EuclideanCalculator::CycleReset() {
+    if(InputCycleQuantization>0){
+        //This will mark the next input pulse as the start of the cycle
+        PositionInInputCycle=InputCycleQuantization-1;
+    }
 }
 
 
@@ -1287,6 +1301,7 @@ void setup() {
   pinMode(LEDPin_CV_ind_Shift,OUTPUT);
   pinMode(LEDPin_CV_ind_Shuffle,OUTPUT);
   pinMode(InPin_Trig,INPUT_PULLUP);
+  pinMode(InPin_Reset,INPUT_PULLUP);
   pinMode(InPin_CV,INPUT);
   
   analogReadRes(12);
@@ -1315,10 +1330,23 @@ void loop() {
       DivsKnobCalibrator.RecordCalibrationValues();
   }
 
+  //Check mode
   ModeControllerMaster.ReadModeSwitch();
   ModeControllerMaster.ReadGateSwitch();
+  
+  // deal with reset input
+  resetInState = digitalRead(InPin_Reset);
+  if(resetInState == 0 && resetInPrevState == 1){      //............if the Reset In voltage switches from low to high
+    //pass to whatever's controlling the current output mode
+    if( ModeControllerMaster.AreWeInEuclideanMode() ){
+      EuclideanCalculatorMain.CycleReset();
+    }else{
+      DividerMultiplierMain.CycleReset();
+    }
+  }
+    resetInPrevState = resetInState;    
     
-  // deal with input
+  // deal with clock input
   clockInState = digitalRead(InPin_Trig);
   if(clockInState == 0 && clockInPrevState == 1){      //............if the Trigger In voltage switches from low to high
     //pass to the pulse predictor
@@ -1333,6 +1361,10 @@ void loop() {
     
   }
     clockInPrevState = clockInState;
+
+
+
+  
 
 
   //update knob control values
