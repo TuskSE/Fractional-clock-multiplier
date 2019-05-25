@@ -66,6 +66,8 @@ const int EncoderCountsPerClick = 4; //property of the encoder used: how many di
 //const int EncoderClicksPerRevolution = 20; //property of the encoder used 
 int EncoderShuffleNoOfClicks = 20; //The number of clicks of encoder rotation which makes the shuffle amount return to it's starting value
 const int EncoderShuffleLedLUT[] = {0, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13, 15, 17, 20, 23, 25, 30, 30, 20}; 
+int intShuffleCVInstruction = 0;
+int ShiftCVInstruction = 0;
 
 bool CVcontrolCycleLength, CVcontrolDivisions, CVcontrolShuffle, CVcontrolShift;
 
@@ -398,7 +400,6 @@ void DividerMultiplier::CalculateOutputTimesMidCycle(){
 //if we reached the end of the cycle, loop back to the start, emit both pulses, and calculate the times for the next set of pulses
 void DividerMultiplier::InputPulse() {
   PositionInInputCycle = PositionInInputCycle + 1;
-
     //If the Main trigger out gate mode is engaged, we need to end any gate-length pulse that might be occuring
    //TrigOutManager_Main.EndPulse();
    ThruPulseStart=true; // pass to thru output
@@ -478,7 +479,7 @@ void DividerMultiplier::UpdateKnobValues(int InCycleLengthKnobPlusCV, int OutCyc
 void DividerMultiplier::ShiftPositionInInputCycle(int AmoutToShiftBy){
   if (AmoutToShiftBy != 0){
     NewPositionTemp = PositionInInputCycle + AmoutToShiftBy;
-  
+
     //code elswhere expect "position in cycle" to be within a range of 0 .... N-1, where N is cycle length.
     //if we've ended up with a position outside this range, find the equivalent value within the range
     
@@ -499,19 +500,17 @@ void DividerMultiplier::ShiftPositionInInputCycle(int AmoutToShiftBy){
 
 void DividerMultiplier::UpdateIntShuffleTime(int intAmountToChangeBy){
   //intAmountToChangeBy should vary from 0 (no shuffle) to EncoderShuffleNoOfClicks (shuffle of exactly one quantization unit)
-  
   if (intAmountToChangeBy != 0){
+
     intShuffle = intShuffle + intAmountToChangeBy;
     //fractionalShuffle = fractionalShuffle + AmountToChangeBy;
   
     //force result to a value between 0 and 1;
       while (intShuffle < 0 ){
-        Serial.println("trigger2");
         intShuffle  = intShuffle + EncoderShuffleNoOfClicks;
       }
     
       while (intShuffle >= EncoderShuffleNoOfClicks){
-        Serial.println("trigger");
         intShuffle = intShuffle - EncoderShuffleNoOfClicks;
       }
  
@@ -523,16 +522,11 @@ void DividerMultiplier::UpdateIntShuffleTime(int intAmountToChangeBy){
     
     //update output times accordingly
     DividerMultiplier::CalculateOutputTimesMidCycle();
-
-    Serial.print(intShuffle);
-    Serial.print(" ");
-    Serial.println(fractionalShuffle);
   }
 }
 
 void DividerMultiplier::PrintPositionInOutputCycle(){
   if(Debug_PositionInOutputCycleOld != PositionInOutputCycle){
-      //Serial.println(PositionInOutputCycle);
 
       if(PulseTimes[PositionInOutputCycle]>millis()){
         Serial.println("something is wrong!");
@@ -560,7 +554,7 @@ void DividerMultiplier::SetPositionInCycle(int NewPosition){
 
 
 class EuclideanCalculator {
-  int InputCycleQuantization, NumberOfHits, mTemp, PositionInInputCycle, InputCycleResetPosition, AmountOfShift, intfractionalShiftOfPolygon;
+  int InputCycleQuantization, NumberOfHits, mTemp, PositionInInputCycle, NewPositionTemp, InputCycleResetPosition, AmountOfShift, intfractionalShiftOfPolygon;
   bool HitLocationsInCycle [16], MainOutPulseStart, ThruPulseStart, CycleOutPulseStart, TransmitPulses, SnapToClosestPoint;
   float QuantizationPointSpacing, PolygonPointSpacing, QuantizationPointsOnCircle[16], PolygonVertexes[16], fractionalShiftOfPolygon;
 
@@ -575,6 +569,7 @@ class EuclideanCalculator {
   bool ShouldWeOutputThruPulse();
   int ReportPositionInCycle();
   void SetPositionInCycle(int);
+  void ShiftPositionInInputCycle(int);
   
 } EuclideanCalculatorMain;
 
@@ -630,13 +625,14 @@ void EuclideanCalculator::UpdateKnobValues(int InCycleQyantizationKnobPlusCV, in
       }
       
       //adjust shift value to be within the cycle length, just for tidyness, and more logical results when we switch the cycle length
-      while (AmountOfShift >= InputCycleQuantization){
-        AmountOfShift = AmountOfShift - InputCycleQuantization;
-      }
+      //while (AmountOfShift >= InputCycleQuantization){
+      //  AmountOfShift = AmountOfShift - InputCycleQuantization;
+      //}
 
-      while (AmountOfShift < 0){
-        AmountOfShift = AmountOfShift + InputCycleQuantization;
-      }
+      //while (AmountOfShift < 0){
+      //  AmountOfShift = AmountOfShift + InputCycleQuantization;
+      //  Serial.println("Amount of shift still present");
+      //}
 
       // Set length and hits
       InputCycleQuantization = InCycleQyantizationKnobPlusCV;
@@ -683,12 +679,34 @@ void EuclideanCalculator::CycleReset() {
     }
 }
 
+void EuclideanCalculator::ShiftPositionInInputCycle(int AmountToShiftBy){
+  if (AmountToShiftBy != 0){
+    NewPositionTemp = PositionInInputCycle + AmountToShiftBy;
+
+    //code elswhere expect "position in cycle" to be within a range of 0 .... N-1, where N is cycle length.
+    //if we've ended up with a position outside this range, find the equivalent value within the range
+
+    if (NewPositionTemp >= InputCycleQuantization){
+      NewPositionTemp = NewPositionTemp + 1; //shift to a frame in which we count from 1 ... N, rather than 0 .... N-1, where N is cycle length
+      NewPositionTemp = NewPositionTemp % InputCycleQuantization;
+      NewPositionTemp = NewPositionTemp - 1; //shift back
+    }
+
+    while (NewPositionTemp < 0){
+      NewPositionTemp = NewPositionTemp + InputCycleQuantization;
+    }
+
+    PositionInInputCycle = NewPositionTemp;
+    EuclideanCalculator::RecalculateRhythm();
+  }
+
+  
+}
 
 void EuclideanCalculator::RecalculateRhythm(){
 
   
   //Spread quantization points along a circle of circumfernece 1; first quantization at 0
-  
   QuantizationPointSpacing = (1.00)/(float)InputCycleQuantization;
   QuantizationPointsOnCircle[0]=0.0;
   for(int i=1; i<InputCycleQuantization; i++){
@@ -709,7 +727,9 @@ void EuclideanCalculator::RecalculateRhythm(){
       PolygonPointSpacing = (1.00)/(float)NumberOfHits;
   
      //We seed the first vertex of the polygon, accounting for the shuffle and shift amounts
-     PolygonVertexes[0] = 0.0 + QuantizationPointSpacing*fractionalShiftOfPolygon + QuantizationPointSpacing*AmountOfShift;
+     PolygonVertexes[0] = 0.0 + QuantizationPointSpacing*fractionalShiftOfPolygon;
+     //PolygonVertexes[0] = 0.0 + QuantizationPointSpacing*fractionalShiftOfPolygon + QuantizationPointSpacing*AmountOfShift;
+     
      //NB: QuantizationPointSpacing*AmountOfShift may have a value of up to one, meaning that when we construct the full polygon, we may have points with values up to 2.0, which we will need to map back on to the circle 0 to 1.0
   
      for(int i=1; i<NumberOfHits; i++){
@@ -788,17 +808,6 @@ void EuclideanCalculator::RecalculateRhythm(){
       return false;
     }
   }
-
-
-  //testing:
-  //for(int m=0; m<InputCycleQuantization; m++){
-    //Serial.print(HitLocationsInCycle[m]);
-    //Serial.print(" ");
-  //}
-  //Serial.println(" "); 
-  //}
-  
-
 
 
 //------------------------------------------------------------------------------------------------------------------------
@@ -916,15 +925,15 @@ void ModeController::UpdateMode(bool Switch1, bool Switch2){
     DivMultMode = true;
     ThirdMode = false;
     
-    DividerMultiplierMain.SetPositionInCycle(EuclideanCalculatorMain.ReportPositionInCycle());  
-    DividerMultiplierMain.CalculateOutputTimesMidCycle();
+    //DividerMultiplierMain.SetPositionInCycle(EuclideanCalculatorMain.ReportPositionInCycle());  
+    //DividerMultiplierMain.CalculateOutputTimesMidCycle();
     
   } else if (Switch2 == 0){
     EuclideanMode = true;
     DivMultMode = false;
     ThirdMode = false;
     
-    EuclideanCalculatorMain.SetPositionInCycle(DividerMultiplierMain.ReportPositionInCycle());
+    //EuclideanCalculatorMain.SetPositionInCycle(DividerMultiplierMain.ReportPositionInCycle());
 
   } else if( (Switch1==1) && (Switch2==1) ){
     EuclideanMode = true;
@@ -1016,10 +1025,7 @@ class CVassigner {
   void CheckButton();
   int readCV();
   int ReturnShiftModifier();
-  int ReturnIntShuffleModifier();
-  float ReturnFractionalShuffleModifier();
-  
-  
+  int ReturnIntShuffleModifier(); 
 } CVassignerMaster;
 
 CVassigner::CVassigner(){  //default starting state is for CV to control divisions
@@ -1052,7 +1058,6 @@ void CVassigner::CheckButton(){
         CyclesSincePreviousButtonPress = CyclesSincePreviousButtonPress+1;
         if(CyclesSincePreviousButtonPress==ButtonRetrigCycles){
           CVassigner::UpdateCVrouting();
-          Serial.println("press!");
         }
       }
     }else{
@@ -1130,7 +1135,6 @@ int CVassigner::readCV(){
   ControlValue_CVin = analogRead(InPin_CV);
   ControlValue_CVin = analogRead(InPin_CV);
   ControlValue_CVin = JitterSmootherCV.SmoothChanges(analogRead(InPin_CV))-CVzeroReading; //read twice to give time for the ADC capacitor to equilibrate, avoiding crosstalk from other analog reads 
-  //Serial.println(ControlValue_CVin);
   
   return (int)(ControlValue_Attenuverter*ControlValue_CVin/CVscalingFactor);
 
@@ -1159,46 +1163,25 @@ int CVassigner::ReturnShiftModifier(){
     
 }
 
-
-float CVassigner::ReturnFractionalShuffleModifier(){
-  if ( CVcontrolShuffle == false ) {
-    if (ShuffleModifierNew != 0){ 
-      //if CV control over shuffle just got disabled, we want to make sure we reverse any changes which CV control exerted previously
-      ShuffleModifierOld = ShuffleModifierNew;
-      ShuffleModifierNew = 0;
-      return (ShuffleModifierNew-ShuffleModifierOld);
-    } else{
-      return 0.0; 
-    }
-  } else { 
-    ShuffleModifierOld = ShuffleModifierNew; //rememeber shift modifier from last function call
-    ShuffleModifierNew = (float)(CVassigner::readCV()/ShuffleCVScalingFactor)/(float)EncoderShuffleNoOfClicks; //This gives the output the same quantization as the encoder
-    ShuffleModifierChange = ShuffleModifierNew - ShuffleModifierOld;
- 
-    return ShuffleModifierChange;
-  }
-  
-}
-
-
 int CVassigner::ReturnIntShuffleModifier(){
+  //Serial.println(intShuffleModifierNew);
   if ( CVcontrolShuffle == false ) {
-    if (ShuffleModifierNew != 0){ 
+    if (intShuffleModifierNew != 0){ 
       //if CV control over shuffle just got disabled, we want to make sure we reverse any changes which CV control exerted previously
+      Serial.println("trigger");
       intShuffleModifierOld = intShuffleModifierNew;
       intShuffleModifierNew = 0;
-      return (ShuffleModifierNew-ShuffleModifierOld);
+      intShuffleModifierChange = intShuffleModifierNew-intShuffleModifierOld;
     } else{
-      return 0; 
+      intShuffleModifierChange = 0; 
     }
   } else { 
     intShuffleModifierOld = intShuffleModifierNew; //rememeber shift modifier from last function call
     intShuffleModifierNew = (CVassigner::readCV()/(float)ShuffleCVScalingFactor); 
     intShuffleModifierChange = intShuffleModifierNew - intShuffleModifierOld;
- 
-    return intShuffleModifierChange;
   }
-  
+
+  return intShuffleModifierChange;
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -1374,13 +1357,8 @@ void loop() {
   resetInState = digitalRead(InPin_Reset);
   if(resetInState == 0 && resetInPrevState == 1){      //............if the Reset In voltage switches from low to high
     //pass to whatever's controlling the current output mode
-    if( ModeControllerMaster.AreWeInEuclideanMode() ){
       EuclideanCalculatorMain.CycleReset();
-    }
-    
-    if(ModeControllerMaster.AreWeInDividerMultiplierMode()){
       DividerMultiplierMain.CycleReset();
-    }
   }
     resetInPrevState = resetInState;    
     
@@ -1390,15 +1368,9 @@ void loop() {
     //pass to the pulse predictor
     InputPulsePredictor.InputPulse();
 
-    //pass to whatever's controlling the current output mode
-    if( ModeControllerMaster.AreWeInEuclideanMode() ){
+    //pass to the output calculators
       EuclideanCalculatorMain.InputPulse();
-    }
-    
-    if(ModeControllerMaster.AreWeInDividerMultiplierMode()){
       DividerMultiplierMain.InputPulse();
-    }
-    
   }
     clockInPrevState = clockInState;
 
@@ -1450,71 +1422,66 @@ void loop() {
          EncoderShiftInstruction = (int)EncoderValTemp/EncoderCountsPerClick;
       } else if(digitalRead(SwPin_Encoder)==1){
          //if the encoder switch *was* pushed, update a shuffle paramater 
-         EncoderShuffleInstruction = (float)(-EncoderValTemp/EncoderCountsPerClick)/(float)(EncoderShuffleNoOfClicks);
          intEncoderShuffleInstruction = -EncoderValTemp/EncoderCountsPerClick;
       }
       EncKnob.write(0); //Now that we have read the accumulated value from the encoder, reset encoder reading to zero
     }
   }
 
-  //Apply knob changes and Shift/Shuffle to pattern, according to encoder changes AND control voltage changes as appropriate 
-  if ( ModeControllerMaster.AreWeInEuclideanMode() ) {
-     EuclideanCalculatorMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, intEncoderShuffleInstruction + CVassignerMaster.ReturnIntShuffleModifier(), -EncoderShiftInstruction + CVassignerMaster.ReturnShiftModifier());
-  }
-  
-  if(ModeControllerMaster.AreWeInDividerMultiplierMode()){
+  //Calculate any CV effects on shift or shuffle
+  intShuffleCVInstruction = CVassignerMaster.ReturnIntShuffleModifier();
+  ShiftCVInstruction = CVassignerMaster.ReturnShiftModifier();
+
+  //Apply knob+CV changes, including Shift/Shuffle, to output calculations
+     EuclideanCalculatorMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, intEncoderShuffleInstruction + intShuffleCVInstruction, 0);
+     EuclideanCalculatorMain.ShiftPositionInInputCycle(EncoderShiftInstruction + ShiftCVInstruction);
      DividerMultiplierMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled);
-     DividerMultiplierMain.ShiftPositionInInputCycle(EncoderShiftInstruction + CVassignerMaster.ReturnShiftModifier());
-     DividerMultiplierMain.UpdateIntShuffleTime(intEncoderShuffleInstruction + CVassignerMaster.ReturnIntShuffleModifier());
-  }
+     DividerMultiplierMain.ShiftPositionInInputCycle(EncoderShiftInstruction + ShiftCVInstruction);
+     DividerMultiplierMain.UpdateIntShuffleTime(intEncoderShuffleInstruction + intShuffleCVInstruction);
+      
 
+  //reset temporary variables
   EncoderShiftInstruction = 0; 
-  EncoderShuffleInstruction = 0.0;
   intEncoderShuffleInstruction = 0;
+  intShuffleCVInstruction = 0;
+  ShiftCVInstruction = 0;
   
-  //check routing of CV signals
+  //update routing of CV signals
   CVassignerMaster.CheckButton();
-
+  
   // deal with starting output pulses
   //for gate output mode, we need to tell the trigger manager to finish emitting pulse(gate) only if a Thru trigger is signalled without an accompanying main trigger
-  if ( ModeControllerMaster.AreWeInEuclideanMode() )
-  {
     // ask euclidean generator whether we should output a pulse
-    if(EuclideanCalculatorMain.ShouldWeOutputThruPulse()==true){
+    if(EuclideanCalculatorMain.ShouldWeOutputThruPulse()==true && ModeControllerMaster.AreWeInEuclideanMode()){
         TrigOutManager_Thru.StartPulse();
         TrigOutManager_Main.EndPulse();
       }
     
-      if(EuclideanCalculatorMain.ShouldWeOutputCyclePulse()==true){
+      if(EuclideanCalculatorMain.ShouldWeOutputCyclePulse()==true && ModeControllerMaster.AreWeInEuclideanMode()){
         TrigOutManager_Cycle.StartPulse();
       }
     
-      if(EuclideanCalculatorMain.ShouldWeOutputMainPulse()==true){
+      if(EuclideanCalculatorMain.ShouldWeOutputMainPulse()==true && ModeControllerMaster.AreWeInEuclideanMode()){
         TrigOutManager_Thru.StartPulse();
         TrigOutManager_Main.StartPulse();
       }
-  }
   
-  if (ModeControllerMaster.AreWeInDividerMultiplierMode()) {
-    // ask divider/multiplier whether we should output a pulse
-      if(DividerMultiplierMain.ShouldWeOutputThruPulse()==true){
+      if(DividerMultiplierMain.ShouldWeOutputThruPulse()==true && ModeControllerMaster.AreWeInDividerMultiplierMode()){
         TrigOutManager_Thru.StartPulse();
         TrigOutManager_Main.EndPulse();
         TrigOutManager_Main.EndPulse();
       }
     
-      if(DividerMultiplierMain.ShouldWeOutputCyclePulse()==true){
+      if(DividerMultiplierMain.ShouldWeOutputCyclePulse()==true && ModeControllerMaster.AreWeInDividerMultiplierMode()){
         TrigOutManager_Cycle.StartPulse();
       }
     
-      if(DividerMultiplierMain.ShouldWeOutputMainPulse()==true){
+      if(DividerMultiplierMain.ShouldWeOutputMainPulse()==true && ModeControllerMaster.AreWeInDividerMultiplierMode()){
         TrigOutManager_Thru.StartPulse();
         TrigOutManager_Main.EndPulse();
         TrigOutManager_Main.StartPulse();
       }
-  }
     
-  
   //deal with actually setting voltage on the outputs
   if(TrigOutManager_Thru.ShouldWeBeOutputting(false)==true){
     digitalWrite(OutPin_Thru,HIGH);
