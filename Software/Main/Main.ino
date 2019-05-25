@@ -60,6 +60,7 @@ float MultDivFactor3 = 0.5;
 Encoder EncKnob(EncPinB, EncPinA);
 int EncoderValTemp = 0;
 int EncoderShiftInstruction = 0; 
+int intEncoderShuffleInstruction = 0;
 float EncoderShuffleInstruction = 0.0;
 const int EncoderCountsPerClick = 4; //property of the encoder used: how many digital output counts corresponding to one click (indent) felt by the user.
 //const int EncoderClicksPerRevolution = 20; //property of the encoder used 
@@ -278,7 +279,7 @@ bool TrigOutManager::ShouldWeBeOutputting(bool GateMode){
 // To space out pulses correctly, it must recieve information about how long the cycle is expected to last. 
 
 class DividerMultiplier {
-  int InputCycleLength,OutputCycleLength,PositionInInputCycle,PositionInOutputCycle,NewPositionTemp, Debug_PositionInOutputCycleOld;
+  int InputCycleLength,OutputCycleLength,PositionInInputCycle,PositionInOutputCycle,NewPositionTemp, Debug_PositionInOutputCycleOld, intShuffle;
   unsigned long int ExpectedCycleLength, CycleStartTime, ExpectedCycleEndTime, ExpectedIntervalTime, PulseTimes[16], ShuffleTime;
   bool CycleOutPulseStart, MainOutPulseStart, ThruPulseStart, TransmitPulses, TransmitCyclePulses;
   float fractionalShuffle;  
@@ -295,7 +296,7 @@ class DividerMultiplier {
   void CalculateOutputTimesMidCycle();
   void UpdateKnobValues(int, int);
   void ShiftPositionInInputCycle(int);
-  void UpdateFractionalShuffleTime(float);
+  void UpdateIntShuffleTime(int);
   void PrintPositionInOutputCycle();
   int ReportPositionInCycle();
   void SetPositionInCycle(int);
@@ -317,6 +318,7 @@ DividerMultiplier::DividerMultiplier(){   //initalize values
   NewPositionTemp = 0;
   fractionalShuffle = 0.0;   //The fraction of an output beat by which the output should be delayed. Expected value between 0 and 1. 
   Debug_PositionInOutputCycleOld = 16;  
+  intShuffle = 0;
 }
 
 void DividerMultiplier::SetInOutCycleLengths(int in, int out){
@@ -494,25 +496,36 @@ void DividerMultiplier::ShiftPositionInInputCycle(int AmoutToShiftBy){
   }
 }
 
-void DividerMultiplier::UpdateFractionalShuffleTime(float AmountToChangeBy){
-  if (AmountToChangeBy != 0){
-    fractionalShuffle = fractionalShuffle + AmountToChangeBy;
+void DividerMultiplier::UpdateIntShuffleTime(int intAmountToChangeBy){
+  //intAmountToChangeBy should vary from 0 (no shuffle) to EncoderShuffleNoOfClicks (shuffle of exactly one quantization unit)
+  
+  if (intAmountToChangeBy != 0){
+    intShuffle = intShuffle + intAmountToChangeBy;
+    //fractionalShuffle = fractionalShuffle + AmountToChangeBy;
   
     //force result to a value between 0 and 1;
-      while (fractionalShuffle < 0 ){
-        fractionalShuffle  = fractionalShuffle + 1.0;
+      while (intShuffle < 0 ){
+        Serial.println("trigger2");
+        intShuffle  = intShuffle + EncoderShuffleNoOfClicks;
       }
     
-      while (fractionalShuffle >= 1.0){
-        fractionalShuffle = fractionalShuffle - 1.0;
+      while (intShuffle >= EncoderShuffleNoOfClicks){
+        Serial.println("trigger");
+        intShuffle = intShuffle - EncoderShuffleNoOfClicks;
       }
  
     //Set brightness of the shuffle indicator LED to reflect the amount of shuffle
-    analogWrite(LEDPin_Shuffle, fractionalShuffle*40);
+    analogWrite(LEDPin_Shuffle, intShuffle);
+
+    //convert into fractional shuffle time
+    fractionalShuffle = (float)intShuffle/(float)EncoderShuffleNoOfClicks;
     
     //update output times accordingly
     DividerMultiplier::CalculateOutputTimesMidCycle();
 
+    Serial.print(intShuffle);
+    Serial.print(" ");
+    Serial.println(fractionalShuffle);
   }
 }
 
@@ -546,14 +559,14 @@ void DividerMultiplier::SetPositionInCycle(int NewPosition){
 
 
 class EuclideanCalculator {
-  int InputCycleQuantization, NumberOfHits, mTemp, PositionInInputCycle, InputCycleResetPosition, AmountOfShift;
+  int InputCycleQuantization, NumberOfHits, mTemp, PositionInInputCycle, InputCycleResetPosition, AmountOfShift, intfractionalShiftOfPolygon;
   bool HitLocationsInCycle [16], MainOutPulseStart, ThruPulseStart, CycleOutPulseStart, TransmitPulses, SnapToClosestPoint;
   float QuantizationPointSpacing, PolygonPointSpacing, QuantizationPointsOnCircle[16], PolygonVertexes[16], fractionalShiftOfPolygon;
 
   public:
   EuclideanCalculator ();
   void RecalculateRhythm();
-  void UpdateKnobValues(int, int, float, float);
+  void UpdateKnobValues(int, int, int, float);
   void InputPulse();
   void CycleReset();
   bool ShouldWeOutputMainPulse();
@@ -574,6 +587,7 @@ EuclideanCalculator::EuclideanCalculator(){   //initalize values. See DividerMul
   SnapToClosestPoint = false;
   PositionInInputCycle = 0;
   fractionalShiftOfPolygon = 0;
+  intfractionalShiftOfPolygon = 0;
   AmountOfShift = 0;
   InputCycleResetPosition = 0; //the position in the input cycle at which we transmit the "cycle" pulse, and which we start at when the sequence restarts. this allows us to manage phase shifts. 
 }
@@ -586,24 +600,27 @@ void EuclideanCalculator::SetPositionInCycle(int NewPosition){
   PositionInInputCycle = NewPosition;
 }
 
-void EuclideanCalculator::UpdateKnobValues(int InCycleQyantizationKnobPlusCV, int NumberOfHitsKnobPlusCV, float ShuffleKnobPlusCV, float ShiftInstruction){
+void EuclideanCalculator::UpdateKnobValues(int InCycleQyantizationKnobPlusCV, int NumberOfHitsKnobPlusCV, int ShuffleKnobPlusCV, float ShiftInstruction){
 
 //if any inputs have changed, we need to do something....
   if( (InCycleQyantizationKnobPlusCV != InputCycleQuantization) || (NumberOfHitsKnobPlusCV != NumberOfHits) || (ShuffleKnobPlusCV != 0) || (ShiftInstruction !=0)){
 
       if(ShuffleKnobPlusCV != 0){
-        //we need to make sure the value fits between  0 and <1, and handle LED output
+        //we need to make sure the value fits between  0 and EncoderShuffleNoOfClicks, and handle LED output
         //this is duplicated in the DividerMultiplier code - would be tider to rewrite this as one function, at some point
-        fractionalShiftOfPolygon = fractionalShiftOfPolygon + ShuffleKnobPlusCV;
+        intfractionalShiftOfPolygon = intfractionalShiftOfPolygon + ShuffleKnobPlusCV;
 
-        while(fractionalShiftOfPolygon < 0.0){
-          fractionalShiftOfPolygon = fractionalShiftOfPolygon + 1;
+        while(intfractionalShiftOfPolygon < 0){
+          intfractionalShiftOfPolygon = intfractionalShiftOfPolygon + EncoderShuffleNoOfClicks;
         }
-        while(fractionalShiftOfPolygon >= 1.0){
-           fractionalShiftOfPolygon = fractionalShiftOfPolygon - 1;
+        while(intfractionalShiftOfPolygon >= EncoderShuffleNoOfClicks){
+           intfractionalShiftOfPolygon = intfractionalShiftOfPolygon - EncoderShuffleNoOfClicks;
         }
         //Set brightness of the shuffle indicator LED to reflect the amount of shuffle
-        analogWrite(LEDPin_Shuffle, fractionalShiftOfPolygon*40);
+        analogWrite(LEDPin_Shuffle, intfractionalShiftOfPolygon);
+
+        //convert to a value between 0 and 1
+        fractionalShiftOfPolygon = (float)intfractionalShiftOfPolygon/(float)EncoderShuffleNoOfClicks;
       }
 
       if(ShiftInstruction != 0){
@@ -982,6 +999,7 @@ class CVassigner {
   bool TempCVbuttonState, OldCVbuttonState, CVdestination [6] {true, false, false, false, false, false}, CVdestinationTemp [6];
 //  bool CVcontrolCycleLength, CVcontrolDivisions, CVcontrolShuffle, CVcontrolShift;   <-- I made these to global for now
   float ControlValue_Attenuverter, ControlValue_CVin, ShuffleModifierOld, ShuffleModifierNew, ShuffleModifierChange;
+  int intShuffleModifierOld, intShuffleModifierNew, intShuffleModifierChange;
   int CVzeroReading, ShiftModifierOld, ShiftModifierNew, ShiftModifierChange; //the analogRead that results when the control votlage = 0;
   int CyclesSincePreviousButtonPress;
   const int CVscalingFactor = 80; //scales the output of CVassigner::readCV to give a result <2000
@@ -997,7 +1015,9 @@ class CVassigner {
   void CheckButton();
   int readCV();
   int ReturnShiftModifier();
+  int ReturnIntShuffleModifier();
   float ReturnFractionalShuffleModifier();
+  
   
 } CVassignerMaster;
 
@@ -1106,15 +1126,9 @@ int CVassigner::readCV(){
   
   
   //aside: do we need a voltage smoother on the above?
-  ControlValue_CVin = analogRead(InPin_CV)-CVzeroReading;
-      //Serial.print(ControlValue_CVin);
-
-    //Serial.print(" ");
-
+  ControlValue_CVin = analogRead(InPin_CV);
+  ControlValue_CVin = analogRead(InPin_CV);
   ControlValue_CVin = JitterSmootherCV.SmoothChanges(analogRead(InPin_CV))-CVzeroReading; //read twice to give time for the ADC capacitor to equilibrate, avoiding crosstalk from other analog reads 
-
-  //Serial.print(ControlValue_Attenuverter);
-  //Serial.print(" ");
   //Serial.println(ControlValue_CVin);
   
   return (int)(ControlValue_Attenuverter*ControlValue_CVin/CVscalingFactor);
@@ -1161,6 +1175,27 @@ float CVassigner::ReturnFractionalShuffleModifier(){
     ShuffleModifierChange = ShuffleModifierNew - ShuffleModifierOld;
  
     return ShuffleModifierChange;
+  }
+  
+}
+
+
+int CVassigner::ReturnIntShuffleModifier(){
+  if ( CVcontrolShuffle == false ) {
+    if (ShuffleModifierNew != 0){ 
+      //if CV control over shuffle just got disabled, we want to make sure we reverse any changes which CV control exerted previously
+      intShuffleModifierOld = intShuffleModifierNew;
+      intShuffleModifierNew = 0;
+      return (ShuffleModifierNew-ShuffleModifierOld);
+    } else{
+      return 0; 
+    }
+  } else { 
+    intShuffleModifierOld = intShuffleModifierNew; //rememeber shift modifier from last function call
+    intShuffleModifierNew = (CVassigner::readCV()/(float)ShuffleCVScalingFactor); 
+    intShuffleModifierChange = intShuffleModifierNew - intShuffleModifierOld;
+ 
+    return intShuffleModifierChange;
   }
   
 }
@@ -1310,7 +1345,7 @@ void setup() {
 
   EncKnob.write(0);
 
-  JitterSmootherCV.SetSampleIntervalandThreshold(60,200); //tunes the smoothing algorith for the control voltage
+  JitterSmootherCV.SetSampleIntervalandThreshold(20,25);//tunes the smoothing algorith for the control voltage
 
 }
 
@@ -1411,25 +1446,24 @@ void loop() {
       } else if(digitalRead(SwPin_Encoder)==1){
          //if the encoder switch *was* pushed, update a shuffle paramater 
          EncoderShuffleInstruction = (float)(-EncoderValTemp/EncoderCountsPerClick)/(float)(EncoderShuffleNoOfClicks);
+         intEncoderShuffleInstruction = -EncoderValTemp/EncoderCountsPerClick;
       }
       EncKnob.write(0); //Now that we have read the accumulated value from the encoder, reset encoder reading to zero
     }
   }
 
-  //if(EncoderShiftInstruction!=0){Serial.println(EncoderShiftInstruction);}
-
   //Apply knob changes and Shift/Shuffle to pattern, according to encoder changes AND control voltage changes as appropriate 
   if ( ModeControllerMaster.AreWeInEuclideanMode() ) {
-     EuclideanCalculatorMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, EncoderShuffleInstruction + CVassignerMaster.ReturnFractionalShuffleModifier(), -EncoderShiftInstruction + CVassignerMaster.ReturnShiftModifier());
+     EuclideanCalculatorMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, intEncoderShuffleInstruction + CVassignerMaster.ReturnIntShuffleModifier(), -EncoderShiftInstruction + CVassignerMaster.ReturnShiftModifier());
   } else {
      DividerMultiplierMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled);
      DividerMultiplierMain.ShiftPositionInInputCycle(EncoderShiftInstruction + CVassignerMaster.ReturnShiftModifier());
-     DividerMultiplierMain.UpdateFractionalShuffleTime(EncoderShuffleInstruction + CVassignerMaster.ReturnFractionalShuffleModifier());
+     DividerMultiplierMain.UpdateIntShuffleTime(intEncoderShuffleInstruction + CVassignerMaster.ReturnIntShuffleModifier());
   }
 
   EncoderShiftInstruction = 0; 
   EncoderShuffleInstruction = 0.0;
- 
+  intEncoderShuffleInstruction = 0;
   
   //check routing of CV signals
   CVassignerMaster.CheckButton();
