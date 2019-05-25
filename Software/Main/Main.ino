@@ -65,6 +65,7 @@ float EncoderShuffleInstruction = 0.0;
 const int EncoderCountsPerClick = 4; //property of the encoder used: how many digital output counts corresponding to one click (indent) felt by the user.
 //const int EncoderClicksPerRevolution = 20; //property of the encoder used 
 int EncoderShuffleNoOfClicks = 20; //The number of clicks of encoder rotation which makes the shuffle amount return to it's starting value
+const int EncoderShuffleLedLUT[] = {0, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13, 15, 17, 20, 23, 25, 30, 30, 20}; 
 
 bool CVcontrolCycleLength, CVcontrolDivisions, CVcontrolShuffle, CVcontrolShift;
 
@@ -515,7 +516,7 @@ void DividerMultiplier::UpdateIntShuffleTime(int intAmountToChangeBy){
       }
  
     //Set brightness of the shuffle indicator LED to reflect the amount of shuffle
-    analogWrite(LEDPin_Shuffle, intShuffle);
+    analogWrite(LEDPin_Shuffle, EncoderShuffleLedLUT[intShuffle]);
 
     //convert into fractional shuffle time
     fractionalShuffle = (float)intShuffle/(float)EncoderShuffleNoOfClicks;
@@ -617,7 +618,7 @@ void EuclideanCalculator::UpdateKnobValues(int InCycleQyantizationKnobPlusCV, in
            intfractionalShiftOfPolygon = intfractionalShiftOfPolygon - EncoderShuffleNoOfClicks;
         }
         //Set brightness of the shuffle indicator LED to reflect the amount of shuffle
-        analogWrite(LEDPin_Shuffle, intfractionalShiftOfPolygon);
+        analogWrite(LEDPin_Shuffle, EncoderShuffleLedLUT[intfractionalShiftOfPolygon]);
 
         //convert to a value between 0 and 1
         fractionalShiftOfPolygon = (float)intfractionalShiftOfPolygon/(float)EncoderShuffleNoOfClicks;
