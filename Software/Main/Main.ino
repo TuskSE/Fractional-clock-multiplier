@@ -927,8 +927,8 @@ void ModeController::UpdateMode(bool Switch1, bool Switch2){
     EuclideanCalculatorMain.SetPositionInCycle(DividerMultiplierMain.ReportPositionInCycle());
 
   } else if( (Switch1==1) && (Switch2==1) ){
-    EuclideanMode = false;
-    DivMultMode = false;
+    EuclideanMode = true;
+    DivMultMode = true;
     ThirdMode = true;
   }
   
@@ -1376,7 +1376,9 @@ void loop() {
     //pass to whatever's controlling the current output mode
     if( ModeControllerMaster.AreWeInEuclideanMode() ){
       EuclideanCalculatorMain.CycleReset();
-    }else{
+    }
+    
+    if(ModeControllerMaster.AreWeInDividerMultiplierMode()){
       DividerMultiplierMain.CycleReset();
     }
   }
@@ -1391,7 +1393,9 @@ void loop() {
     //pass to whatever's controlling the current output mode
     if( ModeControllerMaster.AreWeInEuclideanMode() ){
       EuclideanCalculatorMain.InputPulse();
-    }else{
+    }
+    
+    if(ModeControllerMaster.AreWeInDividerMultiplierMode()){
       DividerMultiplierMain.InputPulse();
     }
     
@@ -1456,7 +1460,9 @@ void loop() {
   //Apply knob changes and Shift/Shuffle to pattern, according to encoder changes AND control voltage changes as appropriate 
   if ( ModeControllerMaster.AreWeInEuclideanMode() ) {
      EuclideanCalculatorMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled, intEncoderShuffleInstruction + CVassignerMaster.ReturnIntShuffleModifier(), -EncoderShiftInstruction + CVassignerMaster.ReturnShiftModifier());
-  } else {
+  }
+  
+  if(ModeControllerMaster.AreWeInDividerMultiplierMode()){
      DividerMultiplierMain.UpdateKnobValues(ControlValue_Length_Scaled, ControlValue_Divisions_Scaled);
      DividerMultiplierMain.ShiftPositionInInputCycle(EncoderShiftInstruction + CVassignerMaster.ReturnShiftModifier());
      DividerMultiplierMain.UpdateIntShuffleTime(intEncoderShuffleInstruction + CVassignerMaster.ReturnIntShuffleModifier());
@@ -1487,7 +1493,9 @@ void loop() {
         TrigOutManager_Thru.StartPulse();
         TrigOutManager_Main.StartPulse();
       }
-  } else  {
+  }
+  
+  if (ModeControllerMaster.AreWeInDividerMultiplierMode()) {
     // ask divider/multiplier whether we should output a pulse
       if(DividerMultiplierMain.ShouldWeOutputThruPulse()==true){
         TrigOutManager_Thru.StartPulse();
